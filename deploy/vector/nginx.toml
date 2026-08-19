@@ -70,5 +70,7 @@ acknowledgements.enabled = true
 
   [sinks.siem_deadletter.buffer]
   type = "disk"
-  max_size = 268435456
+  # Vector's disk-buffer floor is 268435488 bytes (256 MiB + 32 bytes of
+  # ledger); exactly 256 MiB is rejected at startup with status=78/CONFIG.
+  max_size = 536870912
   when_full = "block"
