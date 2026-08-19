@@ -33,6 +33,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/owasp"
 	"github.com/menta2k/siem-v2/backend/internal/server"
 	"github.com/menta2k/siem-v2/backend/internal/service"
+	"github.com/menta2k/siem-v2/backend/internal/version"
 )
 
 func main() {
@@ -40,6 +41,7 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger.Info("starting", "version", version.String())
 	if err := run(*confPath, logger); err != nil {
 		logger.Error("apiserver exited", "error", err)
 		os.Exit(1)

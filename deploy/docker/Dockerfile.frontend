@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+# Nuxt SSR bundle on the node runtime. The API and ingest bases are RUNTIME
+# configuration (NUXT_PUBLIC_API_BASE / NUXT_PUBLIC_INGEST_BASE) — Nuxt reads
+# runtimeConfig from the environment at start, so one image serves every
+# deployment rather than baking an origin in at build time.
+FROM node:22-alpine AS build
+WORKDIR /src
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM node:22-alpine
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /src/.output ./.output
+USER node
+EXPOSE 3000
+ENTRYPOINT ["node", ".output/server/index.mjs"]

@@ -1,0 +1,40 @@
+# OS package definition, rendered by the release workflow with VERSION and ARCH.
+#
+# The packages ship the three Go services, their systemd units and example
+# configuration. The frontend and the wirefilter sidecar deliberately do NOT
+# ship here: both need their own runtimes (node, and a Rust binary that would
+# need per-arch cross-compilation) and are delivered as container images.
+name: siem-v2
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+maintainer: Veselin Iordanov <veselin.iordanov@gmail.com>
+description: |
+  SIEM v2 — WAF log collection, correlation and analysis.
+license: Proprietary
+contents:
+  - src: dist/siem-apiserver
+    dst: /usr/bin/siem-apiserver
+  - src: dist/siem-logproc
+    dst: /usr/bin/siem-logproc
+  - src: dist/siem-retentiond
+    dst: /usr/bin/siem-retentiond
+  - src: deploy/systemd/siem-apiserver.service
+    dst: /lib/systemd/system/siem-apiserver.service
+  - src: deploy/systemd/siem-logproc.service
+    dst: /lib/systemd/system/siem-logproc.service
+  - src: deploy/systemd/siem-retentiond.service
+    dst: /lib/systemd/system/siem-retentiond.service
+  # Example configs land in /etc/siem as conffiles so an upgrade never
+  # overwrites an operator's edits.
+  - src: backend/configs/apiserver.yaml
+    dst: /etc/siem/apiserver.yaml
+    type: config|noreplace
+  - src: backend/configs/logproc.yaml
+    dst: /etc/siem/logproc.yaml
+    type: config|noreplace
+  - src: backend/configs/retentiond.yaml
+    dst: /etc/siem/retentiond.yaml
+    type: config|noreplace
+scripts:
+  preinstall: deploy/packaging/preinstall.sh

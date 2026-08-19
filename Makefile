@@ -124,7 +124,7 @@ run-frontend: ## Run the Nuxt dev server
 .PHONY: docker
 docker: ## Build container images for every service
 	@for s in $(SERVICES); do \
-		docker build -f deploy/docker/Dockerfile.$$s -t siem-v2/$$s:dev . || exit 1; \
+		docker build -f deploy/docker/Dockerfile.backend --build-arg SERVICE=$$s -t siem-v2/$$s:dev . || exit 1; \
 	done
 	docker build -f deploy/docker/Dockerfile.wirefilter -t siem-v2/wirefilter-svc:dev wirefilter-svc
 

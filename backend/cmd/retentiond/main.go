@@ -19,6 +19,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/conf"
 	"github.com/menta2k/siem-v2/backend/internal/data/objectstore"
 	"github.com/menta2k/siem-v2/backend/internal/data/postgres"
+	"github.com/menta2k/siem-v2/backend/internal/version"
 )
 
 func main() {
@@ -27,6 +28,7 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger.Info("starting", "version", version.String())
 	if err := run(*confPath, *migrateOnly, logger); err != nil {
 		logger.Error("retentiond exited", "error", err)
 		os.Exit(1)

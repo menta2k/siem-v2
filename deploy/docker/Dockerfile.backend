@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+# One dockerfile for all three Go services (v1 pattern): SERVICE selects the
+# binary, and the build identity args flow into internal/version so a running
+# container can say what it is.
+FROM golang:1.25-alpine AS build
+ARG SERVICE
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
+ARG APP_DATE=unknown
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+# CGO_ENABLED=0: Coraza is pure Go, so the binary stays static and portable (research.md R2)
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags "-s -w \
+        -X github.com/menta2k/siem-v2/backend/internal/version.Version=${APP_VERSION} \
+        -X github.com/menta2k/siem-v2/backend/internal/version.Commit=${APP_COMMIT} \
+        -X github.com/menta2k/siem-v2/backend/internal/version.Date=${APP_DATE}" \
+      -o /out/service ./cmd/${SERVICE}
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/service /service
+USER nonroot:nonroot
+ENTRYPOINT ["/service"]

@@ -56,8 +56,8 @@ services:
 
   wirefilter-svc:
     build:
-      context: ../../wirefilter-svc
-      dockerfile: ../deploy/docker/Dockerfile.wirefilter
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.wirefilter
     ports: ["8081:8081"]
 
   # Cloudflare Tunnel (ported from v1). cloudflared dials OUT to Cloudflare and serves

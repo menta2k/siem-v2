@@ -1,0 +1,20 @@
+[Unit]
+Description=SIEM v2 logproc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=siem
+Group=siem
+ExecStart=/usr/bin/siem-logproc --conf /etc/siem/logproc.yaml
+# Secrets come from the environment, never the config file (FR-057).
+EnvironmentFile=-/etc/siem/siem.env
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

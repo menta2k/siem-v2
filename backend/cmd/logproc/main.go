@@ -35,6 +35,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/normalize/nginx"
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
 	"github.com/menta2k/siem-v2/backend/internal/observability"
+	"github.com/menta2k/siem-v2/backend/internal/version"
 )
 
 func main() {
@@ -42,6 +43,7 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger.Info("starting", "version", version.String())
 	if err := run(*confPath, logger); err != nil {
 		logger.Error("logproc exited", "error", err)
 		os.Exit(1)
