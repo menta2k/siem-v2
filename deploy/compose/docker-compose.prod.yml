@@ -1,0 +1,38 @@
+# Production override: run the PUBLISHED images instead of building from source.
+#
+# A production host should not need a Go toolchain, node, or cargo — and more
+# importantly, what runs should be exactly what CI built, tested and pushed,
+# not whatever the local checkout happens to contain. Usage:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#         --profile app [--profile tunnel] up -d
+#
+# IMAGE_TAG pins the version (default latest, which tracks main). For a real
+# deployment pin a release: IMAGE_TAG=1.2.0 — rollback is then re-running with
+# the previous tag, as documented in docs/deployment.md.
+services:
+  apiserver:
+    build: !reset null
+    image: ghcr.io/menta2k/siem-v2/apiserver:${IMAGE_TAG:-latest}
+    pull_policy: always
+
+  logproc:
+    build: !reset null
+    image: ghcr.io/menta2k/siem-v2/logproc:${IMAGE_TAG:-latest}
+    pull_policy: always
+
+  retentiond:
+    build: !reset null
+    image: ghcr.io/menta2k/siem-v2/retentiond:${IMAGE_TAG:-latest}
+    pull_policy: always
+
+  frontend:
+    build: !reset null
+    image: ghcr.io/menta2k/siem-v2/frontend:${IMAGE_TAG:-latest}
+    pull_policy: always
+
+  wirefilter-svc:
+    build: !reset null
+    # amd64-only (the release workflow skips QEMU for the Rust build).
+    image: ghcr.io/menta2k/siem-v2/wirefilter-svc:${IMAGE_TAG:-latest}
+    pull_policy: always
