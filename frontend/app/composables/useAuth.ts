@@ -53,7 +53,7 @@ export function useAuth() {
     else sessionStorage.removeItem(SIGNED_OUT_KEY)
   }
   function isSignedOut(): boolean {
-    return import.meta.client && sessionStorage.getItem(SIGNED_OUT_KEY) === '1'
+    return !!import.meta.client && sessionStorage.getItem(SIGNED_OUT_KEY) === '1'
   }
 
   /**

@@ -105,7 +105,10 @@ jobs:
         with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: cd frontend && npm ci
       - name: Typecheck (the type gate — see eslint.config.mjs on why not lint)
-        run: cd frontend && npx nuxi prepare && npx vue-tsc --noEmit
+        # npm run, not npx: the CI failure this fixes was npx fetching a
+        # floating vue-tsc@3 incompatible with the project's TypeScript.
+        # vue-tsc is a pinned devDependency now.
+        run: cd frontend && npm run typecheck
       - run: cd frontend && npm run test
 
   # The one Rust artefact in the repo: the wirefilter sidecar that evaluates
