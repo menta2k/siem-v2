@@ -153,6 +153,44 @@ services:
     depends_on:
       apiserver: { condition: service_started }
 
+  # ---------------------------------------------------------------- F5 collector
+  #
+  # BIG-IP ASM can only ship logs over syslog — a Logging Profile offers TCP,
+  # UDP and TCP-RFC3195, never HTTP — so this translates syslog into
+  # authenticated HTTP (v1's BIG-IP collector pattern).
+  #
+  # It reaches logproc over the COMPOSE NETWORK, not through Cloudflare: once a
+  # log line is on this host there is no reason to send it to the edge and back.
+  #
+  # The syslog port is an unauthenticated inbound port — anything that can
+  # reach it can forge WAF events into the SIEM. Restrict it to BIG-IP's
+  # address at the firewall; F5_SYSLOG_BIND alone only chooses an interface,
+  # it does not filter callers.
+  #
+  #     F5_FEED_ID=<feed-id> F5_FEED_TOKEN=<token> \
+  #         docker compose --profile app --profile f5 up -d
+  vector-f5:
+    image: timberio/vector:0.44.0-alpine
+    profiles: ["f5"]
+    restart: unless-stopped
+    environment:
+      # Plain interpolation, NOT `:?` (v1 lesson): compose evaluates `:?` for
+      # every service at parse time, breaking ps/logs/exec on hosts not running
+      # this profile. The vector config declares the variables required
+      # instead, so the container refuses to start rather than dropping.
+      SIEM_INGEST_URL: http://logproc:8100/ingest/v1/f5asm/${F5_FEED_ID-}
+      SIEM_FEED_TOKEN: ${F5_FEED_TOKEN-}
+    ports:
+      - "${F5_SYSLOG_BIND:-127.0.0.1}:${F5_SYSLOG_PORT:-5514}:5514"
+    volumes:
+      - ../vector/f5asm.toml:/etc/vector/vector.toml:ro
+      # The disk buffer is the no-loss guarantee; it must outlive the container.
+      - vector-f5:/var/lib/vector
+    # required:false — the collector can also point at a host-run logproc,
+    # and a profile-f5-only `up` must not force the app profile in.
+    depends_on:
+      logproc: { condition: service_started, required: false }
+
   # Cloudflare Tunnel (ported from v1). cloudflared dials OUT to Cloudflare and serves
   # over that connection, so the origin needs no inbound port, no public address and no
   # certificate of its own — and cannot return a 522, because there is nothing for
@@ -194,6 +232,7 @@ services:
     # Outbound only. Deliberately no ports: publishing one would defeat the point.
 
 volumes:
+  vector-f5:
   vl-hot:
   vl-warm:
   pg:

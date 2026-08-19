@@ -27,13 +27,18 @@ source = '''
 [sinks.siem_ingest]
 type = "http"
 inputs = ["f5_passthrough"]
-uri = "https://siem.example.com/ingest/v1/vector/f5asm"
+# Both values come from the environment WITHOUT defaults on purpose: Vector
+# refuses to start on a missing variable, which beats silently delivering to
+# nowhere. SIEM_INGEST_URL is the full feed endpoint, e.g.
+#   http://logproc:8100/ingest/v1/f5asm/<feed-id>   (inside the compose network)
+#   https://siem.example.com/ingest/v1/f5asm/<feed-id>  (standalone host)
+uri = "${SIEM_INGEST_URL}"
 method = "post"
 encoding.codec = "text"
 framing.method = "newline_delimited"
 compression = "gzip"
 auth.strategy = "bearer"
-auth.token = "${SIEM_INGEST_SECRET}"
+auth.token = "${SIEM_FEED_TOKEN}"
 acknowledgements.enabled = true
 
   [sinks.siem_ingest.buffer]
