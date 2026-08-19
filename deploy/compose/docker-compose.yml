@@ -173,6 +173,11 @@ services:
     image: timberio/vector:0.44.0-alpine
     profiles: ["f5"]
     restart: unless-stopped
+    # The image's default command loads ITS OWN /etc/vector/vector.yaml — a
+    # demo pipeline that prints joke syslog to the console. Without this
+    # override the mounted config is simply never read, and the collector
+    # looks alive while shipping nothing.
+    command: ["--config", "/etc/vector/vector.toml"]
     environment:
       # Plain interpolation, NOT `:?` (v1 lesson): compose evaluates `:?` for
       # every service at parse time, breaking ps/logs/exec on hosts not running
