@@ -159,12 +159,18 @@ services:
   # Cloudflare to fail to reach. This is also what lets a Logpush feed deliver to
   # /ingest/v1/cloudflare/<feed-id> on a machine with no public IP.
   #
-  # In this stack the app services run on the HOST, so the tunnel's Public Hostnames
-  # point through host.docker.internal:
+  # Public Hostname origins depend on where the app runs. With the `app`
+  # profile (services in containers), use service names and CONTAINER ports —
+  # the frontend listens on 3000 inside; 3002 exists only on the host:
   #
-  #     siem.example.com         ->  http://host.docker.internal:3002   (console)
-  #     api.siem.example.com     ->  http://host.docker.internal:8000   (API)
-  #     ingest.siem.example.com  ->  http://host.docker.internal:8100   (vendor delivery)
+  #     siem.example.com  path api/*     ->  http://apiserver:8000
+  #     siem.example.com  path ingest/*  ->  http://logproc:8100
+  #     siem.example.com  (catch-all)    ->  http://frontend:3000
+  #
+  # One hostname with path rules keeps console and API same-origin, so the
+  # __Host- refresh cookie and CORS need no cross-origin care. With the app
+  # services run on the HOST instead, point at host.docker.internal:3002 /
+  # :8000 / :8100 (the host-gateway mapping below makes that name work).
   #
   # Enabled with a profile so the stack still starts without a token; a cloudflared with
   # no credentials would otherwise crash-loop and bury the real logs:
