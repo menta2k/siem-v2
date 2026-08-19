@@ -1,0 +1,45 @@
+# Container-network variant of backend/configs — addresses are compose service
+# names, not host ports. Mounted read-only by the app profile.
+service:
+  name: logproc
+  version: 0.1.0
+  env: dev
+
+server:
+  http_addr: ":8100"
+  read_timeout: 30s
+  write_timeout: 30s
+
+storage:
+  victorialogs:
+    hot: "http://victorialogs-hot:9428"
+    warm: "http://victorialogs-warm:9429"
+    account_id: 0
+    project_id: 0
+  jetstream:
+    url: "nats://nats:4222"
+    stream_name: "SIEM_RAW"
+    max_age_days: 7
+  valkey:
+    addrs: ["valkey:6379"]
+  postgres:
+    dsn_ref: "env:SIEM_PG_DSN"
+    max_conns: 20
+    min_conns: 2
+
+ingest:
+  logpush_secret_ref: "env:SIEM_INGEST_SECRET"
+  vector_secret_ref: "env:SIEM_INGEST_SECRET"
+  max_body_bytes: 1073741824
+  pull_interval: 60s
+
+correlate:
+  late_arrival_window: 60s
+  heuristic_window: 5s
+
+evaluation:
+  wirefilter_url: "http://wirefilter-svc:8081"
+  timeout: 10s
+  paranoia_level: 1
+  anomaly_threshold: 5
+  request_body_limit: 13107200

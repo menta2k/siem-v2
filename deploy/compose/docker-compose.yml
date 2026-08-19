@@ -63,6 +63,96 @@ services:
       dockerfile: deploy/docker/Dockerfile.wirefilter
     ports: ["8081:8081"]
 
+  # ---------------------------------------------------------------- app services
+  #
+  # The application, behind an `app` profile so the default `up` stays the
+  # infra-only stack for host-run development (binaries on :8000/:8100/:3002
+  # would collide with these published ports). Full stack in containers:
+  #
+  #     docker compose --profile app up -d --build
+  #
+  # Configs are the container-network variants from ./configs; secrets follow
+  # the same .env-with-dev-defaults pattern as the credentials above. On first
+  # start the apiserver logs the bootstrap admin's one-time setup link:
+  #
+  #     docker compose logs apiserver | grep BOOTSTRAP
+  apiserver:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.backend
+      args: { SERVICE: apiserver }
+    profiles: ["app"]
+    restart: unless-stopped
+    command: ["--conf", "/etc/siem/apiserver.yaml"]
+    environment:
+      SIEM_PG_DSN: postgres://${SIEM_PG_USER:-siem}:${SIEM_PG_PASSWORD:-siem_dev_only}@postgres:5432/${SIEM_PG_DB:-siem}?sslmode=disable
+      SIEM_JWT_KEY: ${SIEM_JWT_KEY:-dev-jwt-signing-key-32-bytes-min!}
+      # Must be EXACTLY 32 bytes; the service refuses to start otherwise.
+      SIEM_MFA_KEY: ${SIEM_MFA_KEY:-dev-mfa-sealing-key-32-bytes-ex!}
+      SIEM_INGEST_SECRET: ${SIEM_INGEST_SECRET:-dev-secret}
+      SIEM_CORS_ORIGINS: ${SIEM_CORS_ORIGINS:-http://localhost:3002}
+      SIEM_ADMIN_EMAIL: ${SIEM_ADMIN_EMAIL:-admin@siem.local}
+    volumes:
+      - ./configs/apiserver.yaml:/etc/siem/apiserver.yaml:ro
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      victorialogs-hot: { condition: service_started }
+      valkey: { condition: service_started }
+      wirefilter-svc: { condition: service_started }
+
+  logproc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.backend
+      args: { SERVICE: logproc }
+    profiles: ["app"]
+    restart: unless-stopped
+    command: ["--conf", "/etc/siem/logproc.yaml"]
+    environment:
+      SIEM_PG_DSN: postgres://${SIEM_PG_USER:-siem}:${SIEM_PG_PASSWORD:-siem_dev_only}@postgres:5432/${SIEM_PG_DB:-siem}?sslmode=disable
+      SIEM_INGEST_SECRET: ${SIEM_INGEST_SECRET:-dev-secret}
+    volumes:
+      - ./configs/logproc.yaml:/etc/siem/logproc.yaml:ro
+    ports: ["8100:8100"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      victorialogs-hot: { condition: service_started }
+      nats: { condition: service_started }
+
+  retentiond:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.backend
+      args: { SERVICE: retentiond }
+    profiles: ["app"]
+    restart: unless-stopped
+    command: ["--conf", "/etc/siem/retentiond.yaml"]
+    environment:
+      SIEM_PG_DSN: postgres://${SIEM_PG_USER:-siem}:${SIEM_PG_PASSWORD:-siem_dev_only}@postgres:5432/${SIEM_PG_DB:-siem}?sslmode=disable
+      SIEM_S3_ACCESS_KEY: ${SIEM_S3_ACCESS_KEY:-siem_dev}
+      SIEM_S3_SECRET_KEY: ${SIEM_S3_SECRET_KEY:-siem_dev_only}
+    volumes:
+      - ./configs/retentiond.yaml:/etc/siem/retentiond.yaml:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      rustfs: { condition: service_started }
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.frontend
+    profiles: ["app"]
+    restart: unless-stopped
+    # Runtime configuration, read by Nuxt at start: these are BROWSER-facing
+    # URLs, so they use host-published ports, not service names.
+    environment:
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8000/api/v1}
+      NUXT_PUBLIC_INGEST_BASE: ${NUXT_PUBLIC_INGEST_BASE:-http://localhost:8100}
+    ports: ["3002:3000"]
+    depends_on:
+      apiserver: { condition: service_started }
+
   # Cloudflare Tunnel (ported from v1). cloudflared dials OUT to Cloudflare and serves
   # over that connection, so the origin needs no inbound port, no public address and no
   # certificate of its own — and cannot return a 522, because there is nothing for
