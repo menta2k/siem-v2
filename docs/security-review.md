@@ -60,3 +60,4 @@ REDACTED under every fmt verb. Deny-by-default enforced by a build-failing route
 - The 24-hour sustained soak (SC-004 in full) has not been run; a 3-minute sample at target rate
   and the 2-minute 3× burst stand in for it. The number to watch on the real soak is the
   exact-join ratio, not throughput.
+
