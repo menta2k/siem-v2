@@ -158,4 +158,4 @@ behind a build flag.
 - [x] MFA enrolment confirmed ONLY by a verified code (`analyst` remains unenrolled after seeding; `engineer` enrolled via the browser flow)
 - [x] Full browser flow verified in Chrome: password → QR enrolment → TOTP → session; reload restores via the cookie; sign-out sticks (signed-out marker)
 
-Outstanding: production TLS run to exercise the `__Host-`/Secure cookie path end to end.
+- [x] Production TLS run: the `__Host-`/Secure cookie path exercised end to end on https://siem.server-lab.eu (Cloudflare Tunnel) — bootstrap invite redeemed, admin signed in, refresh cookie observed as `__Host-siem_refresh` with Secure+HttpOnly+SameSite=Strict in the live browser session (2026-08-19). Nothing outstanding.
