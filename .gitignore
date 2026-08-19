@@ -12,6 +12,10 @@ raw/
 
 # Build output
 /bin/
+# `make build` drops the service binaries into backend/ when run from there
+backend/apiserver
+backend/logproc
+backend/retentiond
 backend/coverage.out
 backend/cov.out
 frontend/.nuxt/
