@@ -1,0 +1,33 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - gosec
+    - revive
+    - funlen        # constitution: functions < 50 lines
+    - gocyclo
+    - nestif        # constitution: no nesting > 4 levels
+  settings:
+    funlen:
+      lines: 50
+      statements: 40
+    gocyclo:
+      min-complexity: 15
+    nestif:
+      min-complexity: 4
+    gosec:
+      excludes:
+        - G104
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [funlen, gocyclo, gosec]
+formatters:
+  enable: [gofmt, goimports]

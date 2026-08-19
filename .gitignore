@@ -1,0 +1,26 @@
+# Real provider captures. NEVER COMMITTED.
+#
+# These are unsanitized production records from Cloudflare, DataDome, F5 ASM and
+# nginx: they contain real client addresses, headers, cookies and payloads. They
+# are useful for validating parsers against the shapes providers actually emit,
+# and they must not leave this machine.
+#
+# Sanitized samples for tests belong in backend/test/fixtures/, where a CI guard
+# checks them for credentials and personal data.
+/raw/
+raw/
+
+# Build output
+/bin/
+backend/coverage.out
+backend/cov.out
+frontend/.nuxt/
+frontend/.output/
+frontend/node_modules/
+frontend/dist/
+wirefilter-svc/target/
+node_modules/
+
+# Local environment
+.env
+*.local

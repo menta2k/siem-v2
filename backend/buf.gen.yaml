@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  # OpenAPI is generated and COMMITTED, so the diff is reviewable and the spec is
+  # servable without a build step. CI fails if the committed file is stale.
+  - local: protoc-gen-openapi
+    out: api
+    opt:
+      - title=SIEM v2 — Request Flow Analysis API
+      - version=1.0.0
+      - default_response=false

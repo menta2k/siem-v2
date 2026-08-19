@@ -1,0 +1,74 @@
+# Vector pipeline: nginx access logs → SIEM ingest.
+#
+# Two settings here are load-bearing for the no-loss guarantee (FR-005), not
+# tuning:
+#
+#   - The DISK buffer on the sink is a write-ahead log. Events survive a Vector
+#     restart or a long ingest outage instead of living only in memory.
+#   - acknowledgements=true makes delivery end-to-end: the file source does not
+#     advance its checkpoint until the sink has a 2xx from the ingest endpoint.
+#     Without it, a crash between read and delivery silently loses the events in
+#     flight — the checkpoint says "done", the SIEM never saw them.
+#
+# The ingest endpoint answers 503 (never a false 200) when its durable buffer is
+# unavailable, so Vector holds and retries rather than dropping.
+
+[sources.nginx_access]
+type = "file"
+# nginx MUST use the JSON log_format documented in docs/connecting-vendors.md;
+# the combined text format cannot carry cf_ray.
+include = ["/var/log/nginx/access.json"]
+read_from = "beginning"
+
+[transforms.nginx_validate]
+type = "remap"
+inputs = ["nginx_access"]
+# The line is already JSON; this only asserts it parses, so a malformed line is
+# routed to the dead-letter output instead of being delivered as garbage.
+drop_on_error = true
+reroute_dropped = true
+source = '''
+. = parse_json!(string!(.message))
+'''
+
+[sinks.siem_ingest]
+type = "http"
+inputs = ["nginx_validate"]
+uri = "https://siem.example.com/ingest/v1/vector/nginx"
+method = "post"
+encoding.codec = "json"
+framing.method = "newline_delimited"
+compression = "gzip"
+# The shared secret comes from the environment at Vector startup, never this file.
+auth.strategy = "bearer"
+auth.token = "${SIEM_INGEST_SECRET}"
+# End-to-end acknowledgement: the source checkpoint waits for the 2xx.
+acknowledgements.enabled = true
+
+  [sinks.siem_ingest.buffer]
+  type = "disk"
+  max_size = 1073741824  # 1 GiB of backlog survives an extended ingest outage
+  when_full = "block"    # blocking beats dropping: nginx keeps its own file
+
+  [sinks.siem_ingest.request]
+  retry_attempts = 1000000   # effectively: retry until it works
+  retry_max_duration_secs = 300
+
+# Lines that failed validation still reach the SIEM — as dead-letter candidates,
+# not as parsed events. The original bytes are what make a later parser fix a
+# recovery instead of a gap (Constitution II).
+[sinks.siem_deadletter]
+type = "http"
+inputs = ["nginx_validate.dropped"]
+uri = "https://siem.example.com/ingest/v1/vector/nginx"
+method = "post"
+encoding.codec = "json"
+framing.method = "newline_delimited"
+auth.strategy = "bearer"
+auth.token = "${SIEM_INGEST_SECRET}"
+acknowledgements.enabled = true
+
+  [sinks.siem_deadletter.buffer]
+  type = "disk"
+  max_size = 268435456
+  when_full = "block"

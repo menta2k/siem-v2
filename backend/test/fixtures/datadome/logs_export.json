@@ -1,0 +1,5 @@
+[
+  {"requestid":"dd-req-99","timestamp":"2026-08-19T12:00:00.150Z","ip":"203.0.113.9","host":"shop.example.com","uri":"/search?q=1'+OR+'1'='1","method":"GET","action":"block","botscore":12,"ua":"curl/8.0","country":"DE","asn":64512,"botname":"scrapy","ruletype":"AI Threats"},
+  {"requestid":"dd-req-100","timestamp":"2026-08-19T12:00:01.020Z","ip":"198.51.100.42","host":"shop.example.com","uri":"/cart","method":"POST","action":"allow","botscore":91,"ua":"Mozilla/5.0","country":"US","asn":64500},
+  {"requestid":"dd-req-101","timestamp":"2026-08-19T12:00:03.000Z","ip":"203.0.113.55","host":"shop.example.com","uri":"/api/v1/products","method":"GET","action":"captcha","botscore":25,"ua":"Go-http-client/2.0","country":"FR","asn":64514}
+]

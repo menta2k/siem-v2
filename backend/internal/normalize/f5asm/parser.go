@@ -1,0 +1,220 @@
+// Package f5asm parses F5 BIG-IP ASM key-value (HSL) log records.
+//
+// F5 is the weakest link in the correlation design. Logging an arbitrary request
+// header such as CF-Ray is not confirmed in the official Request Logging profile
+// documentation, and the field-standard approach is an iRule (verification item
+// V2, unresolved). This parser therefore extracts CF-Ray from wherever it can —
+// a dedicated field if the logging profile provides one, or the captured raw
+// request text if an iRule wrote it there — and flags the record when neither
+// works, so the degradation is visible rather than silent.
+package f5asm
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/menta2k/siem-v2/backend/internal/correlate/keys"
+	"github.com/menta2k/siem-v2/backend/internal/normalize"
+	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
+)
+
+const parserVersion = "f5asm/1.0"
+
+// kvRE matches key="value" pairs, allowing escaped quotes inside values.
+var kvRE = regexp.MustCompile(`(\w+)="((?:[^"\\]|\\.)*)"`)
+
+// cfRayRE finds a CF-Ray header inside captured raw request text. The ray id is
+// followed by a colon and a datacentre code on the wire (e.g. "-FRA"), which is
+// not part of the id Cloudflare logs, so it is deliberately excluded.
+var cfRayRE = regexp.MustCompile(`(?i)CF-Ray:\s*([0-9a-f]+)`)
+
+type Parser struct{}
+
+func New() *Parser { return &Parser{} }
+
+func (p *Parser) Provider() schema.Provider { return schema.ProviderF5ASM }
+func (p *Parser) Version() string           { return parserVersion }
+
+func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) {
+	fields := parseKV(string(raw))
+	if len(fields) == 0 {
+		return nil, &normalize.ParseError{
+			Provider: schema.ProviderF5ASM, Version: parserVersion,
+			Reason: "no key=\"value\" pairs found; check the ASM logging profile format",
+		}
+	}
+
+	supportID := fields["support_id"]
+	if supportID == "" {
+		return nil, &normalize.ParseError{
+			Provider: schema.ProviderF5ASM, Version: parserVersion,
+			Reason: "record has no support_id, so it cannot be deduplicated",
+		}
+	}
+
+	eventTime, err := parseTime(fields["date_time"])
+	if err != nil {
+		return nil, &normalize.ParseError{
+			Provider: schema.ProviderF5ASM, Version: parserVersion,
+			Reason: "unparseable date_time", Err: err,
+		}
+	}
+
+	status, _ := strconv.Atoi(fields["response_code"])
+	e := &schema.Event{
+		SchemaVersion: schema.Version,
+		RawID:         "f5:" + supportID,
+		EventID:       "f5:" + supportID,
+		Provider:      schema.ProviderF5ASM,
+		Dataset:       "asm",
+		ParserVersion: parserVersion,
+		// The support_id is F5's OWN reference — the one an operator quotes to F5
+		// support and searches for in the ASM console. It is not a correlation
+		// key (it means nothing to the other providers), but it is how an
+		// investigation that starts in ASM finds its way here.
+		VendorRequestID: supportID,
+		EventTime:       eventTime,
+		ReceivedAt:      receivedAt,
+		Layer:           schema.LayerAppFirewall,
+		Client: schema.Client{
+			IP:      firstNonEmpty(fields["ip_client"], fields["x_forwarded_for_header_value"]),
+			Country: strings.ToUpper(fields["geo_location"]),
+		},
+		Request: schema.Request{
+			Method: fields["method"],
+			Path:   fields["uri"],
+			Query:  fields["query_string"],
+		},
+		Response: schema.Response{Status: status},
+	}
+	if order, ok := e.Layer.Order(); ok {
+		e.LayerOrderHint = order
+	}
+
+	e.Identifiers = extractIdentifiers(fields, e)
+	e.Verdict = mapVerdict(fields)
+	if !e.Verdict.Mapped {
+		e.AddFlag(schema.FlagUnmappedValues)
+	}
+	normalize.ApplyTimeQuality(e)
+	return e, nil
+}
+
+// extractIdentifiers looks for CF-Ray in a dedicated field first, then in the
+// captured raw request. The fallback exists because whether the logging profile
+// can emit an arbitrary header is exactly what V2 has not established.
+func extractIdentifiers(fields map[string]string, e *schema.Event) []string {
+	rayValue := firstNonEmpty(fields["cf_ray"], fields["x_cf_ray"], fields["cf_ray_header"])
+	if rayValue == "" {
+		if m := cfRayRE.FindStringSubmatch(fields["request"]); m != nil {
+			rayValue = m[1]
+		}
+	}
+	if id, ok := keys.NewIdentifier(keys.NSRayID, rayValue); ok {
+		e.RayID = id.Value
+		e.CorrelationKeySource = schema.KeySourceRayID
+		return []string{id.String()}
+	}
+
+	// No ray id anywhere. The record is still valuable — it carries the WAF
+	// verdict — but it can only join heuristically. This is the V2 failure mode
+	// made visible.
+	e.CorrelationKeySource = schema.KeySourceNone
+	e.AddFlag(schema.FlagNoCorrelationKey)
+	return nil
+}
+
+// mapVerdict translates request_status plus the violation fields.
+func mapVerdict(fields map[string]string) schema.Verdict {
+	reason := map[string]any{
+		"request_status": fields["request_status"],
+		"violations":     fields["violations"],
+		"sig_ids":        fields["sig_ids"],
+		"sig_names":      fields["sig_names"],
+		"attack_type":    fields["attack_type"],
+		"severity":       fields["severity"],
+		"support_id":     fields["support_id"],
+	}
+
+	sigID := firstField(fields["sig_ids"])
+	sigName := firstField(fields["sig_names"])
+	attackType := naToEmpty(fields["attack_type"])
+
+	switch strings.ToLower(strings.TrimSpace(fields["request_status"])) {
+	case "blocked":
+		return schema.Verdict{
+			Action: schema.ActionBlocked, Terminating: true,
+			RuleID: sigID, RuleName: sigName, Category: attackType,
+			Mapped: true, ReasonRaw: reason,
+		}
+	case "alerted":
+		// Alerted means ASM detected but did not block — a logged decision, and
+		// conflating it with a block would overstate what the WAF actually did.
+		return schema.Verdict{
+			Action: schema.ActionLogged,
+			RuleID: sigID, RuleName: sigName, Category: attackType,
+			Mapped: true, ReasonRaw: reason,
+		}
+	case "passed":
+		return schema.Verdict{Action: schema.ActionAllowed, Mapped: true, ReasonRaw: reason}
+	case "":
+		return schema.Verdict{Action: schema.ActionUnknown, Mapped: false, ReasonRaw: reason}
+	default:
+		return schema.Verdict{
+			Action: schema.ActionUnknown, Mapped: false,
+			RuleID: sigID, RuleName: sigName, ReasonRaw: reason,
+		}
+	}
+}
+
+func parseKV(line string) map[string]string {
+	out := map[string]string{}
+	for _, m := range kvRE.FindAllStringSubmatch(line, -1) {
+		out[m[1]] = m[2]
+	}
+	return out
+}
+
+func parseTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339, "2006-01-02T15:04:05Z0700"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, &normalize.ParseError{
+		Provider: schema.ProviderF5ASM, Version: parserVersion,
+		Reason: "date_time " + s + " matches no known layout",
+	}
+}
+
+// firstField takes the first entry from a comma-separated ASM list field.
+func firstField(s string) string {
+	s = naToEmpty(s)
+	if i := strings.IndexByte(s, ','); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
+// naToEmpty normalizes ASM's "N/A" placeholder. Carrying it forward would make
+// "not applicable" look like a real attack type in the UI.
+func naToEmpty(s string) string {
+	if strings.EqualFold(strings.TrimSpace(s), "N/A") {
+		return ""
+	}
+	return s
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" && !strings.EqualFold(v, "N/A") {
+			return v
+		}
+	}
+	return ""
+}

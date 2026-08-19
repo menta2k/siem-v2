@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package admin.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/menta2k/siem-v2/backend/api/admin/v1;v1";
+
+// AdminService manages sources, retention, holds and the audit trail.
+service AdminService {
+  rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse) {
+    option (google.api.http) = { get: "/api/v1/sources" };
+  }
+  rpc UpsertSource(UpsertSourceRequest) returns (Source) {
+    option (google.api.http) = { post: "/api/v1/sources" body: "*" };
+  }
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse) {
+    option (google.api.http) = { get: "/api/v1/audit" };
+  }
+  rpc PlaceLegalHold(PlaceLegalHoldRequest) returns (LegalHold) {
+    option (google.api.http) = { post: "/api/v1/legal-holds" body: "*" };
+  }
+  rpc ReleaseLegalHold(ReleaseLegalHoldRequest) returns (LegalHold) {
+    option (google.api.http) = { post: "/api/v1/legal-holds/{hold_id}/release" body: "*" };
+  }
+}
+
+message ListSourcesRequest {}
+
+message ListSourcesResponse {
+  repeated Source sources = 1;
+  int32 count = 2;
+}
+
+// Source is a configured feed.
+//
+// A source is not "onboarded" until every field below is set: each missing piece
+// produces a specific quiet failure later, which is why enabling is a gate
+// rather than a checklist (FR-008).
+message Source {
+  string id = 1;
+  string provider = 2;
+  // push | pull. DataDome is neither: its verdict arrives inside the Cloudflare
+  // record as a Worker subrequest (research.md R3a).
+  string delivery_mode = 3;
+  // Without a declared cadence, silence is undetectable.
+  int32 expected_cadence_seconds = 4;
+  // Without a classification, sensitive fields are stored unmasked.
+  string data_classification = 5;
+  string retention_policy_id = 6;
+  string parser_version = 7;
+  // The detections covering this source, or an explicit statement that none
+  // apply. Silence is not an acceptable answer.
+  string detection_posture = 8;
+  bool enabled = 9;
+  google.protobuf.Timestamp last_record_at = 10;
+  string health_state = 11;
+}
+
+message UpsertSourceRequest {
+  Source source = 1;
+}
+
+message ListAuditRequest {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  string principal_id = 3;
+  string action = 4;
+  int32 limit = 5;
+}
+
+message ListAuditResponse {
+  repeated AuditRecord entries = 1;
+  int32 count = 2;
+}
+
+// AuditRecord is append-only. The database rejects UPDATE, DELETE and TRUNCATE
+// on this table, so the guarantee is enforced by privilege rather than by
+// application discipline (FR-055).
+message AuditRecord {
+  string tenant_id = 1;
+  string principal_id = 2;
+  string action = 3;
+  string scope = 4;
+  string target_ref = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  string outcome = 7;
+  google.protobuf.Struct detail = 8;
+}
+
+message PlaceLegalHoldRequest {
+  google.protobuf.Struct scope_filter = 1;
+  string reason = 2;
+}
+
+message ReleaseLegalHoldRequest {
+  string hold_id = 1;
+}
+
+// LegalHold preserves data beyond its normal expiry.
+//
+// The hold registry is the PRIMARY enforcement; object-store immutability is
+// defence in depth. That ordering means a store which failed to honour Object
+// Lock would degrade tamper-resistance without breaking hold correctness.
+message LegalHold {
+  string id = 1;
+  google.protobuf.Struct scope_filter = 2;
+  string reason = 3;
+  string placed_by = 4;
+  google.protobuf.Timestamp placed_at = 5;
+  google.protobuf.Timestamp released_at = 6;
+  repeated string preserved_refs = 7;
+}

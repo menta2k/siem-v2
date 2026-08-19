@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+package flow.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/menta2k/siem-v2/backend/api/flow/v1;v1";
+
+// FlowService serves correlated request flows.
+//
+// SECURITY INVARIANT: no message in this file carries a query string, filter
+// expression or LogsQL fragment, and none carries a tenant. Search inputs are
+// enumerated typed fields, and the tenant is derived server-side from the
+// authenticated principal — so cross-tenant access is inexpressible rather than
+// merely refused (FR-074b).
+service FlowService {
+  rpc SearchFlows(SearchFlowsRequest) returns (SearchFlowsResponse) {
+    option (google.api.http) = { post: "/api/v1/flows/search" body: "*" };
+  }
+  rpc GetFlow(GetFlowRequest) returns (RequestFlow) {
+    option (google.api.http) = { get: "/api/v1/flows/{flow_id}" };
+  }
+  rpc GetFlowRecords(GetFlowRequest) returns (FlowRecordsResponse) {
+    option (google.api.http) = { get: "/api/v1/flows/{flow_id}/records" };
+  }
+  rpc ExportFlow(GetFlowRequest) returns (EvidencePackage) {
+    option (google.api.http) = { post: "/api/v1/flows/{flow_id}/export" body: "*" };
+  }
+}
+
+// Normalized verdict vocabulary (FR-025).
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_ALLOWED = 1;
+  ACTION_LOGGED = 2;
+  ACTION_RATE_LIMITED = 3;
+  ACTION_CHALLENGED = 4;
+  ACTION_CHALLENGE_PASSED = 5;
+  ACTION_CHALLENGE_FAILED = 6;
+  ACTION_BLOCKED = 7;
+  // An action the provider reported that this system does not recognise. The
+  // raw value is preserved rather than coerced (FR-014).
+  ACTION_UNKNOWN = 8;
+}
+
+// Position in the request path. Ordering derives from this, not from
+// timestamps, because provider clocks disagree (FR-017).
+enum Layer {
+  LAYER_UNSPECIFIED = 0;
+  LAYER_EDGE = 1;
+  LAYER_BOT_MANAGEMENT = 2;
+  LAYER_APP_FIREWALL = 3;
+  LAYER_ORIGIN = 4;
+}
+
+enum Completeness {
+  COMPLETENESS_UNSPECIFIED = 0;
+  COMPLETENESS_COMPLETE = 1;
+  // The late-arrival window elapsed with layers still missing. The gaps are
+  // named explicitly rather than omitted (FR-019).
+  COMPLETENESS_PARTIAL = 2;
+  // More than one candidate matched equally well and we refused to guess
+  // (FR-021).
+  COMPLETENESS_AMBIGUOUS = 3;
+}
+
+message SearchFlowsRequest {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  string client_ip = 3;
+  string host = 4;
+  string path_prefix = 5;
+  string method = 6;
+  int32 status = 7;
+  Action action = 8;
+  Layer layer = 9;
+  string rule_id = 10;
+  string country = 11;
+  string provider = 12;
+  Completeness completeness = 13;
+  int32 limit = 14;
+  string cursor = 15;
+}
+
+message SearchFlowsResponse {
+  repeated RequestFlow flows = 1;
+  int32 count = 2;
+  string next_cursor = 3;
+  // Set when the range reaches cold storage, so the longer retrieval is
+  // communicated before the search runs.
+  string tier_notice = 4;
+}
+
+message GetFlowRequest {
+  string flow_id = 1;
+}
+
+message RequestFlow {
+  string flow_id = 1;
+  string correlation_key = 2;
+  repeated NormalizedEvent events = 3;
+  repeated Layer layers_present = 4;
+  // Absent layers are listed explicitly. "We never heard from the WAF" and "the
+  // WAF allowed it" are different facts and must never look the same (FR-019).
+  repeated Layer layers_missing = 5;
+  Completeness completeness = 6;
+  string correlation_method = 7;
+  double correlation_confidence = 8;
+  // True when the join depended on a record carrying two identifier spaces —
+  // in this deployment, a Cloudflare record holding both its own ray and its
+  // parent ray (research.md R3a).
+  bool bridged = 9;
+  Action effective_outcome = 10;
+  Layer terminating_layer = 11;
+  google.protobuf.Timestamp first_seen = 12;
+  google.protobuf.Timestamp last_seen = 13;
+  map<string, double> timing_attribution = 14;
+  bool amended = 15;
+  repeated string data_quality_flags = 16;
+  Client client = 17;
+  Request request = 18;
+}
+
+message NormalizedEvent {
+  string event_id = 1;
+  string provider = 2;
+  Layer layer = 3;
+  google.protobuf.Timestamp event_time = 4;
+  google.protobuf.Timestamp received_at = 5;
+  Verdict verdict = 6;
+  repeated string data_quality_flags = 7;
+  Client client = 8;
+  Request request = 9;
+  Response response = 10;
+}
+
+message Verdict {
+  Action action = 1;
+  bool terminating = 2;
+  string rule_id = 3;
+  string rule_name = 4;
+  string category = 5;
+  optional double score = 6;
+  optional double threshold = 7;
+  // False when the provider reported a value we do not recognise. The original
+  // is preserved in reason_raw (FR-014).
+  bool mapped = 8;
+  map<string, string> reason_raw = 9;
+}
+
+message Client {
+  string ip = 1;
+  int32 asn = 2;
+  string country = 3;
+  string user_agent = 4;
+}
+
+message Request {
+  string method = 1;
+  string host = 2;
+  string path = 3;
+  string query = 4;
+  string http_version = 5;
+}
+
+message Response {
+  int32 status = 1;
+  int64 bytes = 2;
+  double duration_ms = 3;
+}
+
+message FlowRecordsResponse {
+  repeated RawRecord records = 1;
+}
+
+message RawRecord {
+  string raw_id = 1;
+  string provider = 2;
+  google.protobuf.Timestamp received_at = 3;
+  string payload = 4;
+  // Fields masked before storage. Naming them matters: a package that silently
+  // omits fields looks complete and is not (FR-056).
+  repeated string masked_fields = 5;
+}
+
+message EvidencePackage {
+  RequestFlow flow = 1;
+  repeated RawRecord raw_records = 2;
+  Provenance provenance = 3;
+  repeated string redactions = 4;
+}
+
+message Provenance {
+  string exported_by = 1;
+  google.protobuf.Timestamp exported_at = 2;
+  string audit_record_id = 3;
+  string tenant_id = 4;
+  string schema_version = 5;
+  // States plainly whether classified fields were unmasked for this export. An
+  // investigator must know which of the two things they are holding.
+  bool sensitive_included = 6;
+}

@@ -1,0 +1,432 @@
+openapi: 3.0.3
+info:
+  title: SIEM v2 — Request Flow Analysis API
+  version: 1.0.0
+  description: >
+    Backend API for multi-provider WAF log correlation and request flow analysis.
+
+    GENERATED ARTIFACT: the source of truth is contracts/proto/. Regenerate with `make api`.
+
+    SECURITY INVARIANT (FR-074b, R8): no endpoint accepts LogsQL or any query fragment from a
+    client. All search endpoints take structured, typed parameters that the backend compiles into
+    LogsQL with tenant headers injected server-side. Cross-tenant access is inexpressible, not
+    merely refused.
+servers:
+  - url: https://siem.example.com/api/v1
+
+security:
+  - bearerAuth: []
+
+paths:
+  /flows/search:
+    post:
+      summary: Search request flows by structured criteria
+      description: FR-037. Structured parameters only — never a raw query string.
+      operationId: searchFlows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowSearchRequest' }
+      responses:
+        '200':
+          description: Matching flows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowSearchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flows/{flowId}:
+    get:
+      summary: Get one request flow with its full ordered timeline
+      description: FR-066. Includes layers_missing and data_quality_flags so a partial view is never mistaken for complete (FR-070).
+      operationId: getFlow
+      parameters:
+        - name: flowId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The flow
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RequestFlow' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /flows/{flowId}/records:
+    get:
+      summary: Get the original provider records contributing to a flow
+      description: FR-067, FR-028. Sensitive fields masked unless the caller holds view_sensitive (FR-056).
+      operationId: getFlowRecords
+      parameters:
+        - name: flowId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Contributing raw records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records:
+                    type: array
+                    items: { $ref: '#/components/schemas/RawRecord' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flows/{flowId}/export:
+    post:
+      summary: Export a flow as an evidence package
+      description: FR-041. Requires the export permission; recorded in the audit trail (FR-042).
+      operationId: exportFlow
+      parameters:
+        - name: flowId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Evidence package
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidencePackage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /evaluations:
+    post:
+      summary: Evaluate a captured request against OWASP CRS or a Cloudflare expression
+      description: >
+        FR-030, FR-031. engine=owasp_crs executes a real Coraza/CRS engine and is authoritative.
+        engine=cf_expression evaluates the expression only and does NOT reproduce Cloudflare's full
+        product evaluation — the response states this in fidelity_note (FR-073b).
+      operationId: createEvaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvaluationRequest' }
+      responses:
+        '200':
+          description: Evaluation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvaluationRun' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503':
+          description: Engine unavailable (e.g. wirefilter sidecar down). Degraded, not fatal.
+
+  /evaluations/{runId}:
+    get:
+      summary: Retrieve a past evaluation run
+      description: FR-034 — runs are retrievable with full provenance.
+      operationId: getEvaluation
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvaluationRun' }
+
+  /alerts:
+    get:
+      summary: List alerts
+      description: FR-048 — each alert carries its detection version, evidence and linked flows.
+      operationId: listAlerts
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
+        - { name: acknowledged, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items: { $ref: '#/components/schemas/Alert' }
+
+  /health/collection:
+    get:
+      summary: Collection health per source
+      description: >
+        FR-071, FR-060. Drives the frontend's "is this view complete" indicator. Reports per-source
+        silence and per-stage zero-output conditions (FR-044, FR-045).
+      operationId: getCollectionHealth
+      responses:
+        '200':
+          description: Health per source and stage
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionHealth' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  responses:
+    BadRequest:
+      description: Invalid input. Message discloses no internal detail (FR-058).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Outside the principal's tenant, role or property scope (FR-053). Recorded in audit.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Not found, or outside the caller's scope — deliberately indistinguishable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+    FlowSearchRequest:
+      type: object
+      required: [from, to]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        client_ip: { type: string }
+        host: { type: string }
+        path_prefix: { type: string }
+        method: { type: string }
+        status: { type: integer }
+        action:
+          type: string
+          enum: [allowed, logged, rate_limited, challenged, challenge_passed, challenge_failed, blocked]
+        layer: { type: string, enum: [edge, bot_management, app_firewall, origin] }
+        rule_id: { type: string }
+        country: { type: string }
+        user_agent_contains: { type: string }
+        provider: { type: string, enum: [cloudflare, f5asm, nginx] }
+        completeness: { type: string, enum: [complete, partial, ambiguous] }
+        limit: { type: integer, default: 50, maximum: 1000 }
+        cursor: { type: string }
+
+    FlowSearchResponse:
+      type: object
+      properties:
+        flows:
+          type: array
+          items: { $ref: '#/components/schemas/RequestFlowSummary' }
+        next_cursor: { type: string, nullable: true }
+        tier_notice:
+          type: string
+          nullable: true
+          description: Set when the range reaches cold storage, so longer retrieval is communicated before the search runs (SC-005 scenario).
+
+    RequestFlowSummary:
+      type: object
+      properties:
+        flow_id: { type: string }
+        correlation_key: { type: string, nullable: true }
+        first_seen: { type: string, format: date-time }
+        effective_outcome: { type: string }
+        terminating_layer: { type: string, nullable: true }
+        completeness: { type: string, enum: [complete, partial, ambiguous] }
+        correlation_method: { type: string, enum: [exact, heuristic] }
+        client_ip: { type: string, nullable: true }
+        host: { type: string, nullable: true }
+        path: { type: string, nullable: true }
+        status: { type: integer, nullable: true }
+
+    RequestFlow:
+      allOf:
+        - $ref: '#/components/schemas/RequestFlowSummary'
+        - type: object
+          properties:
+            correlation_confidence: { type: number }
+            events:
+              type: array
+              items: { $ref: '#/components/schemas/NormalizedEvent' }
+            layers_present: { type: array, items: { type: string } }
+            layers_missing:
+              type: array
+              items: { type: string }
+              description: Absent layers explicit, never silently omitted (FR-019)
+            timing_attribution:
+              type: object
+              additionalProperties: { type: number }
+            amended: { type: boolean }
+            data_quality_flags: { type: array, items: { type: string } }
+
+    NormalizedEvent:
+      type: object
+      description: See contracts/normalized-event.schema.json for the authoritative schema.
+      properties:
+        event_id: { type: string }
+        provider: { type: string }
+        layer: { type: string }
+        event_time: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        verdict: { $ref: '#/components/schemas/Verdict' }
+        data_quality_flags: { type: array, items: { type: string } }
+
+    Verdict:
+      type: object
+      properties:
+        action: { type: string }
+        terminating: { type: boolean }
+        rule_id: { type: string, nullable: true }
+        rule_name: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        score: { type: number, nullable: true }
+        threshold: { type: number, nullable: true }
+        mapped: { type: boolean, description: "False -> value surfaced verbatim as unmapped (FR-014)" }
+        reason_raw: { type: object }
+
+    RawRecord:
+      type: object
+      properties:
+        raw_id: { type: string }
+        provider: { type: string }
+        received_at: { type: string, format: date-time }
+        payload: { type: string }
+        masked_fields: { type: array, items: { type: string } }
+
+    EvidencePackage:
+      type: object
+      properties:
+        flow: { $ref: '#/components/schemas/RequestFlow' }
+        raw_records:
+          type: array
+          items: { $ref: '#/components/schemas/RawRecord' }
+        provenance:
+          type: object
+          properties:
+            exported_by: { type: string }
+            exported_at: { type: string, format: date-time }
+            audit_record_id: { type: string }
+
+    EvaluationRequest:
+      type: object
+      required: [engine]
+      properties:
+        engine: { type: string, enum: [owasp_crs, cf_expression] }
+        flow_id: { type: string }
+        event_id: { type: string }
+        expression:
+          type: string
+          description: Required for cf_expression
+        paranoia_level: { type: integer, minimum: 1, maximum: 4, default: 1 }
+        inbound_anomaly_threshold: { type: integer, default: 5 }
+        request_overrides:
+          type: object
+          description: Modify the captured request to test a variant (FR-032)
+        compare_to_run_id:
+          type: string
+          description: Produce a side-by-side comparison (FR-032)
+
+    EvaluationRun:
+      type: object
+      properties:
+        run_id: { type: string }
+        engine: { type: string }
+        engine_version: { type: string, description: "Pinned per run so results stay reproducible (FR-073c)" }
+        ruleset_version: { type: string }
+        scheme_version: { type: string, nullable: true }
+        parameters: { type: object }
+        matched_rules:
+          type: array
+          items:
+            type: object
+            properties:
+              rule_id: { type: string }
+              message: { type: string }
+              severity: { type: string }
+              data: { type: string }
+        anomaly_score:
+          type: number
+          nullable: true
+          description: "OWASP only. Extraction path is verification item V1 — not yet empirically confirmed."
+        resulting_action: { type: string }
+        would_block: { type: boolean }
+        matched: { type: boolean, nullable: true, description: "cf_expression only" }
+        input_completeness:
+          type: object
+          description: FR-035 — states truncated/masked/expired input so a misleading result is impossible
+          properties:
+            complete: { type: boolean }
+            missing_fields: { type: array, items: { type: string } }
+            warning: { type: string, nullable: true }
+        fidelity_note:
+          type: string
+          nullable: true
+          description: FR-073b — states the evaluation model's known limits
+        caveats: { type: array, items: { type: string } }
+        comparison: { type: object, nullable: true }
+        operator_id: { type: string }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    Alert:
+      type: object
+      properties:
+        alert_id: { type: string }
+        detection_id: { type: string }
+        detection_version: { type: string }
+        fired_at: { type: string, format: date-time }
+        severity: { type: string }
+        evidence: { type: object }
+        linked_flow_ids: { type: array, items: { type: string } }
+        recommended_first_check: { type: string }
+        acknowledged_by: { type: string, nullable: true }
+
+    CollectionHealth:
+      type: object
+      properties:
+        overall: { type: string, enum: [healthy, degraded, critical] }
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              source_id: { type: string }
+              provider: { type: string }
+              state: { type: string, enum: [healthy, silent, degraded] }
+              last_record_at: { type: string, format: date-time, nullable: true }
+              expected_cadence_seconds: { type: integer }
+              records_per_second: { type: number }
+              parse_failure_rate: { type: number }
+        stages:
+          type: array
+          items:
+            type: object
+            properties:
+              stage: { type: string }
+              state: { type: string, enum: [healthy, zero_output, backlogged] }
+              input_rate: { type: number }
+              output_rate: { type: number }
+              backlog_depth: { type: integer }
+              latency_p95_ms: { type: number }
+        correlation_quality:
+          type: object
+          description: FR-072e — degradation in identifier propagation is an operational condition
+          properties:
+            exact_join_ratio: { type: number }
+            heuristic_join_ratio: { type: number }
+            ambiguous_ratio: { type: number }
+            uncorrelated_ratio: { type: number }

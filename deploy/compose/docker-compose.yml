@@ -1,0 +1,103 @@
+name: siem-v2
+
+services:
+  victorialogs-hot:
+    image: victoriametrics/victoria-logs:latest
+    command:
+      - -storageDataPath=/vlogs
+      - -retentionPeriod=30d
+      - -retention.maxDiskUsagePercent=80
+      - -delete.enable                      # required for targeted expiry; see research.md R7
+    ports: ["9428:9428"]
+    volumes: ["vl-hot:/vlogs"]
+
+  victorialogs-warm:
+    image: victoriametrics/victoria-logs:latest
+    command:
+      - -storageDataPath=/vlogs
+      - -retentionPeriod=90d
+      - -httpListenAddr=:9429
+      - -delete.enable
+    ports: ["9429:9429"]
+    volumes: ["vl-warm:/vlogs"]
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: siem
+      POSTGRES_PASSWORD: siem_dev_only
+      POSTGRES_DB: siem
+    ports: ["55432:5432"]   # host port shifted: 5432 is taken by another local stack
+    volumes: ["pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siem"]
+      interval: 5s
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    # appendonly: correlation state must survive restart (FR-023)
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports: ["56379:6379"]   # host port shifted: 6379 is taken by another local stack
+    volumes: ["valkey:/data"]
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js", "-sd", "/data"]
+    ports: ["4222:4222", "8222:8222"]
+    volumes: ["nats:/data"]
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_ACCESS_KEY: siem_dev
+      RUSTFS_SECRET_KEY: siem_dev_only
+    ports: ["9000:9000"]
+    volumes: ["rustfs:/data"]
+
+  wirefilter-svc:
+    build:
+      context: ../../wirefilter-svc
+      dockerfile: ../deploy/docker/Dockerfile.wirefilter
+    ports: ["8081:8081"]
+
+  # Cloudflare Tunnel (ported from v1). cloudflared dials OUT to Cloudflare and serves
+  # over that connection, so the origin needs no inbound port, no public address and no
+  # certificate of its own — and cannot return a 522, because there is nothing for
+  # Cloudflare to fail to reach. This is also what lets a Logpush feed deliver to
+  # /ingest/v1/cloudflare/<feed-id> on a machine with no public IP.
+  #
+  # In this stack the app services run on the HOST, so the tunnel's Public Hostnames
+  # point through host.docker.internal:
+  #
+  #     siem.example.com         ->  http://host.docker.internal:3002   (console)
+  #     api.siem.example.com     ->  http://host.docker.internal:8000   (API)
+  #     ingest.siem.example.com  ->  http://host.docker.internal:8100   (vendor delivery)
+  #
+  # Enabled with a profile so the stack still starts without a token; a cloudflared with
+  # no credentials would otherwise crash-loop and bury the real logs:
+  #
+  #     CLOUDFLARE_TUNNEL_TOKEN=... docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.3
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # Plain interpolation, not `:?`: that check is evaluated for every service at
+      # parse time, so requiring the token here would break `compose ps`, `logs` and
+      # `exec` on any host not running the tunnel. The profile keeps this out of a
+      # default `up`, and cloudflared exits loudly on an empty token.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN-}
+    # host.docker.internal is automatic on Docker Desktop but not on Linux; the
+    # host-gateway mapping makes the same name work everywhere.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Outbound only. Deliberately no ports: publishing one would defeat the point.
+
+volumes:
+  vl-hot:
+  vl-warm:
+  pg:
+  valkey:
+  nats:
+  rustfs:

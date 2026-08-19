@@ -1,0 +1,1060 @@
+# Generated with protoc-gen-openapi
+# https://github.com/google/gnostic/tree/master/cmd/protoc-gen-openapi
+
+openapi: 3.0.3
+info:
+    title: SIEM v2 — Request Flow Analysis API
+    version: 1.0.0
+paths:
+    /api/v1/alerts:
+        get:
+            tags:
+                - AlertService
+            operationId: AlertService_ListAlerts
+            parameters:
+                - name: from
+                  in: query
+                  schema:
+                    type: string
+                    format: date-time
+                - name: to
+                  in: query
+                  schema:
+                    type: string
+                    format: date-time
+                - name: severity
+                  in: query
+                  schema:
+                    type: integer
+                    format: enum
+                - name: acknowledged
+                  in: query
+                  description: |-
+                    When false, only unacknowledged alerts are returned — what an on-call
+                     responder wants by default.
+                  schema:
+                    type: boolean
+                - name: limit
+                  in: query
+                  schema:
+                    type: integer
+                    format: int32
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListAlertsResponse'
+    /api/v1/alerts/{alertId}/acknowledge:
+        post:
+            tags:
+                - AlertService
+            operationId: AlertService_AcknowledgeAlert
+            parameters:
+                - name: alertId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/AcknowledgeAlertRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AcknowledgeAlertResponse'
+    /api/v1/audit:
+        get:
+            tags:
+                - AdminService
+            operationId: AdminService_ListAudit
+            parameters:
+                - name: from
+                  in: query
+                  schema:
+                    type: string
+                    format: date-time
+                - name: to
+                  in: query
+                  schema:
+                    type: string
+                    format: date-time
+                - name: principalId
+                  in: query
+                  schema:
+                    type: string
+                - name: action
+                  in: query
+                  schema:
+                    type: string
+                - name: limit
+                  in: query
+                  schema:
+                    type: integer
+                    format: int32
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListAuditResponse'
+    /api/v1/evaluations:
+        post:
+            tags:
+                - EvaluationService
+            operationId: EvaluationService_CreateEvaluation
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateEvaluationRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EvaluationRun'
+    /api/v1/evaluations/{runId}:
+        get:
+            tags:
+                - EvaluationService
+            operationId: EvaluationService_GetEvaluation
+            parameters:
+                - name: runId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EvaluationRun'
+    /api/v1/flows/search:
+        post:
+            tags:
+                - FlowService
+            operationId: FlowService_SearchFlows
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SearchFlowsRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SearchFlowsResponse'
+    /api/v1/flows/{flowId}:
+        get:
+            tags:
+                - FlowService
+            operationId: FlowService_GetFlow
+            parameters:
+                - name: flowId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RequestFlow'
+    /api/v1/flows/{flowId}/export:
+        post:
+            tags:
+                - FlowService
+            operationId: FlowService_ExportFlow
+            parameters:
+                - name: flowId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GetFlowRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EvidencePackage'
+    /api/v1/flows/{flowId}/records:
+        get:
+            tags:
+                - FlowService
+            operationId: FlowService_GetFlowRecords
+            parameters:
+                - name: flowId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FlowRecordsResponse'
+    /api/v1/health/collection:
+        get:
+            tags:
+                - AlertService
+            operationId: AlertService_GetCollectionHealth
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CollectionHealth'
+    /api/v1/legal-holds:
+        post:
+            tags:
+                - AdminService
+            operationId: AdminService_PlaceLegalHold
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PlaceLegalHoldRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LegalHold'
+    /api/v1/legal-holds/{holdId}/release:
+        post:
+            tags:
+                - AdminService
+            operationId: AdminService_ReleaseLegalHold
+            parameters:
+                - name: holdId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ReleaseLegalHoldRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LegalHold'
+    /api/v1/sources:
+        get:
+            tags:
+                - AdminService
+            operationId: AdminService_ListSources
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListSourcesResponse'
+        post:
+            tags:
+                - AdminService
+            operationId: AdminService_UpsertSource
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpsertSourceRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Source'
+    /api/v1/stats/verdicts:
+        get:
+            tags:
+                - AlertService
+            operationId: AlertService_GetVerdictStats
+            parameters:
+                - name: from
+                  in: query
+                  schema:
+                    type: string
+                    format: date-time
+                - name: to
+                  in: query
+                  schema:
+                    type: string
+                    format: date-time
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VerdictStats'
+components:
+    schemas:
+        AcknowledgeAlertRequest:
+            type: object
+            properties:
+                alertId:
+                    type: string
+        AcknowledgeAlertResponse:
+            type: object
+            properties:
+                acknowledged:
+                    type: boolean
+        Alert:
+            type: object
+            properties:
+                alertId:
+                    type: string
+                detectionId:
+                    type: string
+                detectionVersion:
+                    type: string
+                    description: |-
+                        The version that fired. An alert must name it, because a detection's
+                         meaning changes with its version.
+                firedAt:
+                    type: string
+                    format: date-time
+                severity:
+                    type: integer
+                    format: enum
+                title:
+                    type: string
+                evidence:
+                    type: object
+                    description: |-
+                        Carried ON the alert, not linked from it. An alert that requires a separate
+                         query before anyone can act on it is one people learn to skip (FR-048).
+                linkedFlowIds:
+                    type: array
+                    items:
+                        type: string
+                recommendedFirstCheck:
+                    type: string
+                expectedResponse:
+                    type: string
+                occurrenceCount:
+                    type: integer
+                    description: |-
+                        How many times the condition recurred while suppressed. Reported rather
+                         than collapsed, so a persisting problem does not look like a single event.
+                    format: int32
+                deliveryState:
+                    type: string
+                acknowledgedBy:
+                    type: string
+                acknowledgedAt:
+                    type: string
+                    format: date-time
+        AuditRecord:
+            type: object
+            properties:
+                tenantId:
+                    type: string
+                principalId:
+                    type: string
+                action:
+                    type: string
+                scope:
+                    type: string
+                targetRef:
+                    type: string
+                occurredAt:
+                    type: string
+                    format: date-time
+                outcome:
+                    type: string
+                detail:
+                    type: object
+            description: |-
+                AuditRecord is append-only. The database rejects UPDATE, DELETE and TRUNCATE
+                 on this table, so the guarantee is enforced by privilege rather than by
+                 application discipline (FR-055).
+        Client:
+            type: object
+            properties:
+                ip:
+                    type: string
+                asn:
+                    type: integer
+                    format: int32
+                country:
+                    type: string
+                userAgent:
+                    type: string
+        CollectionHealth:
+            type: object
+            properties:
+                overall:
+                    type: string
+                sources:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/SourceHealth'
+                stages:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/StageHealth'
+                correlationQuality:
+                    $ref: '#/components/schemas/CorrelationQuality'
+            description: |-
+                CollectionHealth drives the banner shown on every page, so a user never reads
+                 an incomplete view as a complete one (FR-071).
+        CorrelationQuality:
+            type: object
+            properties:
+                exactJoinRatio:
+                    type: number
+                    description: |-
+                        A falling exact-join ratio means identifier propagation broke while flows
+                         still appear to form normally (FR-072e).
+                    format: double
+                heuristicJoinRatio:
+                    type: number
+                    format: double
+                ambiguousRatio:
+                    type: number
+                    format: double
+                uncorrelatedRatio:
+                    type: number
+                    format: double
+        CreateEvaluationRequest:
+            type: object
+            properties:
+                engine:
+                    type: integer
+                    format: enum
+                flowId:
+                    type: string
+                eventId:
+                    type: string
+                expression:
+                    type: string
+                    description: Required for ENGINE_CF_EXPRESSION.
+                paranoiaLevel:
+                    type: integer
+                    format: int32
+                inboundAnomalyThreshold:
+                    type: integer
+                    format: int32
+                requestOverrides:
+                    type: object
+                    additionalProperties:
+                        type: string
+                    description: Modify the captured request to test a variant (FR-032).
+                compareToRunId:
+                    type: string
+                    description: Produce a side-by-side comparison against an earlier run.
+        EvaluationRun:
+            type: object
+            properties:
+                runId:
+                    type: string
+                engine:
+                    type: integer
+                    format: enum
+                engineVersion:
+                    type: string
+                    description: |-
+                        Pinned per run so a result stays interpretable after an upgrade moves the
+                         ruleset underneath it (FR-073c).
+                rulesetVersion:
+                    type: string
+                schemeVersion:
+                    type: string
+                paranoiaLevel:
+                    type: integer
+                    format: int32
+                matchedRules:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MatchedRule'
+                anomalyScore:
+                    type: integer
+                    format: int32
+                scoreAvailable:
+                    type: boolean
+                    description: |-
+                        False when the score could not be read, so "scored zero" is never confused
+                         with "no score available".
+                threshold:
+                    type: integer
+                    format: int32
+                wouldBlock:
+                    type: boolean
+                matched:
+                    type: boolean
+                inputCompleteness:
+                    $ref: '#/components/schemas/InputCompleteness'
+                fidelityNote:
+                    type: string
+                    description: States the evaluation model's known limits (FR-073b).
+                warnings:
+                    type: array
+                    items:
+                        type: string
+                operatorId:
+                    type: string
+                startedAt:
+                    type: string
+                    format: date-time
+                completedAt:
+                    type: string
+                    format: date-time
+        EvidencePackage:
+            type: object
+            properties:
+                flow:
+                    $ref: '#/components/schemas/RequestFlow'
+                rawRecords:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RawRecord'
+                provenance:
+                    $ref: '#/components/schemas/Provenance'
+                redactions:
+                    type: array
+                    items:
+                        type: string
+        FlowRecordsResponse:
+            type: object
+            properties:
+                records:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RawRecord'
+        GetFlowRequest:
+            type: object
+            properties:
+                flowId:
+                    type: string
+        InputCompleteness:
+            type: object
+            properties:
+                complete:
+                    type: boolean
+                missingFields:
+                    type: array
+                    items:
+                        type: string
+                bodyTruncated:
+                    type: boolean
+                maskedFields:
+                    type: array
+                    items:
+                        type: string
+                warning:
+                    type: string
+            description: |-
+                InputCompleteness records what the capture was missing, so a result from
+                 partial input can never be read as the production verdict (FR-035).
+        LegalHold:
+            type: object
+            properties:
+                id:
+                    type: string
+                scopeFilter:
+                    type: object
+                reason:
+                    type: string
+                placedBy:
+                    type: string
+                placedAt:
+                    type: string
+                    format: date-time
+                releasedAt:
+                    type: string
+                    format: date-time
+                preservedRefs:
+                    type: array
+                    items:
+                        type: string
+            description: |-
+                LegalHold preserves data beyond its normal expiry.
+
+                 The hold registry is the PRIMARY enforcement; object-store immutability is
+                 defence in depth. That ordering means a store which failed to honour Object
+                 Lock would degrade tamper-resistance without breaking hold correctness.
+        ListAlertsResponse:
+            type: object
+            properties:
+                alerts:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Alert'
+                count:
+                    type: integer
+                    format: int32
+        ListAuditResponse:
+            type: object
+            properties:
+                entries:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AuditRecord'
+                count:
+                    type: integer
+                    format: int32
+        ListSourcesResponse:
+            type: object
+            properties:
+                sources:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Source'
+                count:
+                    type: integer
+                    format: int32
+        MatchedRule:
+            type: object
+            properties:
+                ruleId:
+                    type: integer
+                    format: int32
+                message:
+                    type: string
+                data:
+                    type: string
+                severity:
+                    type: string
+                tags:
+                    type: array
+                    items:
+                        type: string
+        NormalizedEvent:
+            type: object
+            properties:
+                eventId:
+                    type: string
+                provider:
+                    type: string
+                layer:
+                    type: integer
+                    format: enum
+                eventTime:
+                    type: string
+                    format: date-time
+                receivedAt:
+                    type: string
+                    format: date-time
+                verdict:
+                    $ref: '#/components/schemas/Verdict'
+                dataQualityFlags:
+                    type: array
+                    items:
+                        type: string
+                client:
+                    $ref: '#/components/schemas/Client'
+                request:
+                    $ref: '#/components/schemas/Request'
+                response:
+                    $ref: '#/components/schemas/Response'
+        PlaceLegalHoldRequest:
+            type: object
+            properties:
+                scopeFilter:
+                    type: object
+                reason:
+                    type: string
+        Provenance:
+            type: object
+            properties:
+                exportedBy:
+                    type: string
+                exportedAt:
+                    type: string
+                    format: date-time
+                auditRecordId:
+                    type: string
+                tenantId:
+                    type: string
+                schemaVersion:
+                    type: string
+                sensitiveIncluded:
+                    type: boolean
+                    description: |-
+                        States plainly whether classified fields were unmasked for this export. An
+                         investigator must know which of the two things they are holding.
+        RawRecord:
+            type: object
+            properties:
+                rawId:
+                    type: string
+                provider:
+                    type: string
+                receivedAt:
+                    type: string
+                    format: date-time
+                payload:
+                    type: string
+                maskedFields:
+                    type: array
+                    items:
+                        type: string
+                    description: |-
+                        Fields masked before storage. Naming them matters: a package that silently
+                         omits fields looks complete and is not (FR-056).
+        ReleaseLegalHoldRequest:
+            type: object
+            properties:
+                holdId:
+                    type: string
+        Request:
+            type: object
+            properties:
+                method:
+                    type: string
+                host:
+                    type: string
+                path:
+                    type: string
+                query:
+                    type: string
+                httpVersion:
+                    type: string
+        RequestFlow:
+            type: object
+            properties:
+                flowId:
+                    type: string
+                correlationKey:
+                    type: string
+                events:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/NormalizedEvent'
+                layersPresent:
+                    type: array
+                    items:
+                        type: integer
+                        format: enum
+                layersMissing:
+                    type: array
+                    items:
+                        type: integer
+                        format: enum
+                    description: |-
+                        Absent layers are listed explicitly. "We never heard from the WAF" and "the
+                         WAF allowed it" are different facts and must never look the same (FR-019).
+                completeness:
+                    type: integer
+                    format: enum
+                correlationMethod:
+                    type: string
+                correlationConfidence:
+                    type: number
+                    format: double
+                bridged:
+                    type: boolean
+                    description: |-
+                        True when the join depended on a record carrying two identifier spaces —
+                         in this deployment, a Cloudflare record holding both its own ray and its
+                         parent ray (research.md R3a).
+                effectiveOutcome:
+                    type: integer
+                    format: enum
+                terminatingLayer:
+                    type: integer
+                    format: enum
+                firstSeen:
+                    type: string
+                    format: date-time
+                lastSeen:
+                    type: string
+                    format: date-time
+                timingAttribution:
+                    type: object
+                    additionalProperties:
+                        type: number
+                        format: double
+                amended:
+                    type: boolean
+                dataQualityFlags:
+                    type: array
+                    items:
+                        type: string
+                client:
+                    $ref: '#/components/schemas/Client'
+                request:
+                    $ref: '#/components/schemas/Request'
+        Response:
+            type: object
+            properties:
+                status:
+                    type: integer
+                    format: int32
+                bytes:
+                    type: string
+                durationMs:
+                    type: number
+                    format: double
+        SearchFlowsRequest:
+            type: object
+            properties:
+                from:
+                    type: string
+                    format: date-time
+                to:
+                    type: string
+                    format: date-time
+                clientIp:
+                    type: string
+                host:
+                    type: string
+                pathPrefix:
+                    type: string
+                method:
+                    type: string
+                status:
+                    type: integer
+                    format: int32
+                action:
+                    type: integer
+                    format: enum
+                layer:
+                    type: integer
+                    format: enum
+                ruleId:
+                    type: string
+                country:
+                    type: string
+                provider:
+                    type: string
+                completeness:
+                    type: integer
+                    format: enum
+                limit:
+                    type: integer
+                    format: int32
+                cursor:
+                    type: string
+        SearchFlowsResponse:
+            type: object
+            properties:
+                flows:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RequestFlow'
+                count:
+                    type: integer
+                    format: int32
+                nextCursor:
+                    type: string
+                tierNotice:
+                    type: string
+                    description: |-
+                        Set when the range reaches cold storage, so the longer retrieval is
+                         communicated before the search runs.
+        Source:
+            type: object
+            properties:
+                id:
+                    type: string
+                provider:
+                    type: string
+                deliveryMode:
+                    type: string
+                    description: |-
+                        push | pull. DataDome is neither: its verdict arrives inside the Cloudflare
+                         record as a Worker subrequest (research.md R3a).
+                expectedCadenceSeconds:
+                    type: integer
+                    description: Without a declared cadence, silence is undetectable.
+                    format: int32
+                dataClassification:
+                    type: string
+                    description: Without a classification, sensitive fields are stored unmasked.
+                retentionPolicyId:
+                    type: string
+                parserVersion:
+                    type: string
+                detectionPosture:
+                    type: string
+                    description: |-
+                        The detections covering this source, or an explicit statement that none
+                         apply. Silence is not an acceptable answer.
+                enabled:
+                    type: boolean
+                lastRecordAt:
+                    type: string
+                    format: date-time
+                healthState:
+                    type: string
+            description: |-
+                Source is a configured feed.
+
+                 A source is not "onboarded" until every field below is set: each missing piece
+                 produces a specific quiet failure later, which is why enabling is a gate
+                 rather than a checklist (FR-008).
+        SourceHealth:
+            type: object
+            properties:
+                sourceId:
+                    type: string
+                provider:
+                    type: string
+                state:
+                    type: string
+                    description: |-
+                        healthy | silent | degraded | awaiting_first_record | disabled.
+
+                         awaiting_first_record is NOT silent: a source nobody switched on and one
+                         that stopped need opposite responses.
+                lastRecordAt:
+                    type: string
+                    format: date-time
+                expectedCadenceSeconds:
+                    type: integer
+                    format: int32
+                recordsPerSecond:
+                    type: number
+                    format: double
+                parseFailureRate:
+                    type: number
+                    format: double
+                credentialValid:
+                    type: boolean
+                    description: |-
+                        Distinguished from silence because a rejected credential CAUSES silence,
+                         and reading the symptom sends an operator to the wrong place.
+        StageHealth:
+            type: object
+            properties:
+                stage:
+                    type: string
+                state:
+                    type: string
+                    description: |-
+                        healthy | zero_output | backlogged. zero_output is the condition a liveness
+                         probe cannot see: input flowing, nothing coming out, process alive.
+                inputRate:
+                    type: number
+                    format: double
+                outputRate:
+                    type: number
+                    format: double
+                backlogDepth:
+                    type: string
+                latencyP95Ms:
+                    type: number
+                    format: double
+        UpsertSourceRequest:
+            type: object
+            properties:
+                source:
+                    $ref: '#/components/schemas/Source'
+        Verdict:
+            type: object
+            properties:
+                action:
+                    type: integer
+                    format: enum
+                terminating:
+                    type: boolean
+                ruleId:
+                    type: string
+                ruleName:
+                    type: string
+                category:
+                    type: string
+                score:
+                    type: number
+                    format: double
+                threshold:
+                    type: number
+                    format: double
+                mapped:
+                    type: boolean
+                    description: |-
+                        False when the provider reported a value we do not recognise. The original
+                         is preserved in reason_raw (FR-014).
+                reasonRaw:
+                    type: object
+                    additionalProperties:
+                        type: string
+        VerdictStats:
+            type: object
+            properties:
+                totalFlows:
+                    type: integer
+                    format: int32
+                byOutcome:
+                    type: object
+                    additionalProperties:
+                        type: integer
+                        format: int32
+                byTerminatingLayer:
+                    type: object
+                    additionalProperties:
+                        type: integer
+                        format: int32
+                byCompleteness:
+                    type: object
+                    additionalProperties:
+                        type: integer
+                        format: int32
+                byProvider:
+                    type: object
+                    additionalProperties:
+                        type: integer
+                        format: int32
+                bridgedFlows:
+                    type: integer
+                    format: int32
+                exactJoinRatio:
+                    type: number
+                    format: double
+tags:
+    - name: AdminService
+      description: AdminService manages sources, retention, holds and the audit trail.
+    - name: AlertService
+      description: AlertService serves fired detections and pipeline health.
+    - name: EvaluationService
+      description: EvaluationService replays captured requests against rule logic.
+    - name: FlowService
+      description: |-
+        FlowService serves correlated request flows.
+
+         SECURITY INVARIANT: no message in this file carries a query string, filter
+         expression or LogsQL fragment, and none carries a tenant. Search inputs are
+         enumerated typed fields, and the tenant is derived server-side from the
+         authenticated principal — so cross-tenant access is inexpressible rather than
+         merely refused (FR-074b).

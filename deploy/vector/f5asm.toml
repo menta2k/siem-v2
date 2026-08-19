@@ -1,0 +1,46 @@
+# Vector pipeline: F5 BIG-IP ASM remote logging (syslog) → SIEM ingest.
+#
+# ASM's logging profile should use the Key-Value Pairs format (least parsing
+# ambiguity) and include the captured request, which is where CF-Ray is
+# recovered from when the profile cannot emit it as its own field — see
+# docs/connecting-vendors.md for the iRule.
+#
+# Same durability posture as the nginx pipeline: disk buffer plus end-to-end
+# acknowledgements, because a syslog datagram Vector accepted and then lost is
+# invisible to everyone.
+
+[sources.f5_syslog]
+type = "syslog"
+address = "0.0.0.0:5514"
+mode = "tcp"   # TCP, not UDP: ASM supports it and datagram loss is silent
+
+[transforms.f5_passthrough]
+type = "remap"
+inputs = ["f5_syslog"]
+# The SIEM's own parser handles the key-value format; Vector only strips the
+# syslog framing and forwards the message body untouched, so the ORIGINAL bytes
+# reach the dead-letter store when parsing fails downstream.
+source = '''
+. = { "message": string!(.message) }
+'''
+
+[sinks.siem_ingest]
+type = "http"
+inputs = ["f5_passthrough"]
+uri = "https://siem.example.com/ingest/v1/vector/f5asm"
+method = "post"
+encoding.codec = "text"
+framing.method = "newline_delimited"
+compression = "gzip"
+auth.strategy = "bearer"
+auth.token = "${SIEM_INGEST_SECRET}"
+acknowledgements.enabled = true
+
+  [sinks.siem_ingest.buffer]
+  type = "disk"
+  max_size = 1073741824
+  when_full = "block"
+
+  [sinks.siem_ingest.request]
+  retry_attempts = 1000000
+  retry_max_duration_secs = 300

@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+# Constitution: the gates below are all blocking. A red gate blocks the merge.
+env:
+  # PINNED to a patch, not the "1.25" minor (v1 lesson): setup-go resolves a minor
+  # to whatever patch its cache holds, which can turn govulncheck red on stdlib
+  # advisories against a commit that touched nothing. Bumping this is how a stdlib
+  # fix gets adopted — deliberately, in a reviewable diff, not whenever a runner
+  # image is rebuilt.
+  GO_VERSION: "1.25.13"
+  NODE_VERSION: "22"
+  # Pinned for the same reason as the linters: the OpenAPI generator's output is
+  # COMMITTED, and contract-drift diffs regenerated-vs-committed. An unpinned
+  # generator fails that gate on formatting changes nobody made.
+  GNOSTIC_VERSION: "v0.7.1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - uses: bufbuild/buf-action@v1
+        with: { setup_only: true }
+      # gofmt + vet + gosec are the gates this codebase is actually kept clean
+      # against locally. golangci-lint is deliberately absent: introducing a
+      # linter the developer's machine has never applied is how CI starts
+      # failing on rules nobody chose (v1's own pinning comment, taken one
+      # step further).
+      - name: gofmt
+        run: |
+          cd backend
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "not gofmt-clean:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: cd backend && go vet ./...
+      - name: buf lint
+        run: cd backend && buf lint
+      - name: eslint
+        # nuxi prepare first: the eslint config imports the generated
+        # .nuxt/eslint.config.mjs, which does not exist on a fresh checkout.
+        run: cd frontend && npm ci && npx nuxi prepare && npm run lint
+
+  contract-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: backend/go.sum }
+      - uses: bufbuild/buf-action@v1
+        with: { setup_only: true }
+      - name: Install protoc + generator
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler
+          go install github.com/google/gnostic/cmd/protoc-gen-openapi@${{ env.GNOSTIC_VERSION }}
+      # The contract and the code cannot drift apart: the committed openapi.yaml
+      # must equal what the protos generate.
+      - run: make api-check
+
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: backend/go.sum }
+      - name: Unit + fixture tests (race)
+        run: cd backend && go test ./... -race -count=1
+      - name: "Coverage gate (constitution: >=80% on parse/correlate/authz)"
+        run: |
+          cd backend
+          go test ./internal/normalize/... ./internal/correlate/... ./internal/biz/tenancy/... \
+            -coverprofile=coverage.out -covermode=atomic
+          pct=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "coverage: $pct%"
+          awk -v p="$pct" 'BEGIN{ if (p+0 < 80) { print "FAIL: below the 80% floor"; exit 1 } }'
+      # Constitution III: a detection cannot activate without a positive AND a
+      # near-miss fixture.
+      - name: Detection fixtures
+        run: cd backend && go test ./internal/alerting/... -run TestDetectionFixtures -count=1
+      - name: Start dependency stack
+        # Named services only: wirefilter-svc would pull a Rust build into this
+        # job, and the integration tests that need it skip when it is absent.
+        run: docker compose -f deploy/compose/docker-compose.yml up -d --wait
+          victorialogs-hot postgres valkey nats rustfs
+      - name: Integration tests (real Postgres, VictoriaLogs, NATS, RustFS)
+        run: make test-integration
+      - name: Scenario replays
+        run: make test-scenarios
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: backend-coverage, path: backend/coverage.out }
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci
+      - name: Typecheck (the type gate — see eslint.config.mjs on why not lint)
+        run: cd frontend && npx nuxi prepare && npx vue-tsc --noEmit
+      - run: cd frontend && npm run test
+
+  # The one Rust artefact in the repo: the wirefilter sidecar that evaluates
+  # candidate Cloudflare expressions. Its own job because it shares no toolchain
+  # with anything else — and a merge gate for the same reason the others are: the
+  # service exists because an expression looked correct and matched nothing.
+  test-wirefilter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy, rustfmt }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: wirefilter-svc }
+      - run: cd wirefilter-svc && cargo fmt --check
+      - run: cd wirefilter-svc && cargo clippy --all-targets -- -D warnings
+      - run: cd wirefilter-svc && cargo test
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          cd backend && gosec -quiet ./...
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          cd backend && govulncheck ./...
+      - name: npm audit
+        run: cd frontend && npm ci && npm audit --audit-level=high
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  build:
+    needs: [lint, contract-drift, test-backend, test-frontend, test-wirefilter, security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Build Go services (static)
+        run: make build
+      - name: Build frontend
+        run: cd frontend && npm ci && npm run build

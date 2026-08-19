@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package evaluation.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/menta2k/siem-v2/backend/api/evaluation/v1;v1";
+
+// EvaluationService replays captured requests against rule logic.
+service EvaluationService {
+  rpc CreateEvaluation(CreateEvaluationRequest) returns (EvaluationRun) {
+    option (google.api.http) = { post: "/api/v1/evaluations" body: "*" };
+  }
+  rpc GetEvaluation(GetEvaluationRequest) returns (EvaluationRun) {
+    option (google.api.http) = { get: "/api/v1/evaluations/{run_id}" };
+  }
+}
+
+enum Engine {
+  ENGINE_UNSPECIFIED = 0;
+  // Executes a real Coraza/CRS engine. Authoritative.
+  ENGINE_OWASP_CRS = 1;
+  // Evaluates a Cloudflare rule EXPRESSION. It does not reproduce Cloudflare's
+  // full product evaluation, and every response says so (FR-073b).
+  ENGINE_CF_EXPRESSION = 2;
+}
+
+message CreateEvaluationRequest {
+  Engine engine = 1;
+  string flow_id = 2;
+  string event_id = 3;
+  // Required for ENGINE_CF_EXPRESSION.
+  string expression = 4;
+  int32 paranoia_level = 5;
+  int32 inbound_anomaly_threshold = 6;
+  // Modify the captured request to test a variant (FR-032).
+  map<string, string> request_overrides = 7;
+  // Produce a side-by-side comparison against an earlier run.
+  string compare_to_run_id = 8;
+}
+
+message GetEvaluationRequest {
+  string run_id = 1;
+}
+
+message EvaluationRun {
+  string run_id = 1;
+  Engine engine = 2;
+  // Pinned per run so a result stays interpretable after an upgrade moves the
+  // ruleset underneath it (FR-073c).
+  string engine_version = 3;
+  string ruleset_version = 4;
+  string scheme_version = 5;
+  int32 paranoia_level = 6;
+  repeated MatchedRule matched_rules = 7;
+  int32 anomaly_score = 8;
+  // False when the score could not be read, so "scored zero" is never confused
+  // with "no score available".
+  bool score_available = 9;
+  int32 threshold = 10;
+  bool would_block = 11;
+  optional bool matched = 12;
+  InputCompleteness input_completeness = 13;
+  // States the evaluation model's known limits (FR-073b).
+  string fidelity_note = 14;
+  repeated string warnings = 15;
+  string operator_id = 16;
+  google.protobuf.Timestamp started_at = 17;
+  google.protobuf.Timestamp completed_at = 18;
+}
+
+message MatchedRule {
+  int32 rule_id = 1;
+  string message = 2;
+  string data = 3;
+  string severity = 4;
+  repeated string tags = 5;
+}
+
+// InputCompleteness records what the capture was missing, so a result from
+// partial input can never be read as the production verdict (FR-035).
+message InputCompleteness {
+  bool complete = 1;
+  repeated string missing_fields = 2;
+  bool body_truncated = 3;
+  repeated string masked_fields = 4;
+  string warning = 5;
+}

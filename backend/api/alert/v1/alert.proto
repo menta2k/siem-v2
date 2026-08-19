@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package alert.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/menta2k/siem-v2/backend/api/alert/v1;v1";
+
+// AlertService serves fired detections and pipeline health.
+service AlertService {
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse) {
+    option (google.api.http) = { get: "/api/v1/alerts" };
+  }
+  rpc AcknowledgeAlert(AcknowledgeAlertRequest) returns (AcknowledgeAlertResponse) {
+    option (google.api.http) = { post: "/api/v1/alerts/{alert_id}/acknowledge" body: "*" };
+  }
+  rpc GetCollectionHealth(GetCollectionHealthRequest) returns (CollectionHealth) {
+    option (google.api.http) = { get: "/api/v1/health/collection" };
+  }
+  rpc GetVerdictStats(GetVerdictStatsRequest) returns (VerdictStats) {
+    option (google.api.http) = { get: "/api/v1/stats/verdicts" };
+  }
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_LOW = 1;
+  SEVERITY_MEDIUM = 2;
+  SEVERITY_HIGH = 3;
+  SEVERITY_CRITICAL = 4;
+}
+
+message ListAlertsRequest {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  Severity severity = 3;
+  // When false, only unacknowledged alerts are returned — what an on-call
+  // responder wants by default.
+  optional bool acknowledged = 4;
+  int32 limit = 5;
+}
+
+message ListAlertsResponse {
+  repeated Alert alerts = 1;
+  int32 count = 2;
+}
+
+message Alert {
+  string alert_id = 1;
+  string detection_id = 2;
+  // The version that fired. An alert must name it, because a detection's
+  // meaning changes with its version.
+  string detection_version = 3;
+  google.protobuf.Timestamp fired_at = 4;
+  Severity severity = 5;
+  string title = 6;
+  // Carried ON the alert, not linked from it. An alert that requires a separate
+  // query before anyone can act on it is one people learn to skip (FR-048).
+  google.protobuf.Struct evidence = 7;
+  repeated string linked_flow_ids = 8;
+  string recommended_first_check = 9;
+  string expected_response = 10;
+  // How many times the condition recurred while suppressed. Reported rather
+  // than collapsed, so a persisting problem does not look like a single event.
+  int32 occurrence_count = 11;
+  string delivery_state = 12;
+  string acknowledged_by = 13;
+  google.protobuf.Timestamp acknowledged_at = 14;
+}
+
+message AcknowledgeAlertRequest {
+  string alert_id = 1;
+}
+
+message AcknowledgeAlertResponse {
+  bool acknowledged = 1;
+}
+
+message GetCollectionHealthRequest {}
+
+// CollectionHealth drives the banner shown on every page, so a user never reads
+// an incomplete view as a complete one (FR-071).
+message CollectionHealth {
+  string overall = 1;
+  repeated SourceHealth sources = 2;
+  repeated StageHealth stages = 3;
+  CorrelationQuality correlation_quality = 4;
+}
+
+message SourceHealth {
+  string source_id = 1;
+  string provider = 2;
+  // healthy | silent | degraded | awaiting_first_record | disabled.
+  //
+  // awaiting_first_record is NOT silent: a source nobody switched on and one
+  // that stopped need opposite responses.
+  string state = 3;
+  google.protobuf.Timestamp last_record_at = 4;
+  int32 expected_cadence_seconds = 5;
+  double records_per_second = 6;
+  double parse_failure_rate = 7;
+  // Distinguished from silence because a rejected credential CAUSES silence,
+  // and reading the symptom sends an operator to the wrong place.
+  bool credential_valid = 8;
+}
+
+message StageHealth {
+  string stage = 1;
+  // healthy | zero_output | backlogged. zero_output is the condition a liveness
+  // probe cannot see: input flowing, nothing coming out, process alive.
+  string state = 2;
+  double input_rate = 3;
+  double output_rate = 4;
+  int64 backlog_depth = 5;
+  double latency_p95_ms = 6;
+}
+
+message CorrelationQuality {
+  // A falling exact-join ratio means identifier propagation broke while flows
+  // still appear to form normally (FR-072e).
+  double exact_join_ratio = 1;
+  double heuristic_join_ratio = 2;
+  double ambiguous_ratio = 3;
+  double uncorrelated_ratio = 4;
+}
+
+message GetVerdictStatsRequest {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+}
+
+message VerdictStats {
+  int32 total_flows = 1;
+  map<string, int32> by_outcome = 2;
+  map<string, int32> by_terminating_layer = 3;
+  map<string, int32> by_completeness = 4;
+  map<string, int32> by_provider = 5;
+  int32 bridged_flows = 6;
+  double exact_join_ratio = 7;
+}

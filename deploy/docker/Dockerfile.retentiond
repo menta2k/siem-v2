@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+# CGO_ENABLED=0: Coraza is pure Go, so the binary stays static and portable (research.md R2)
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/retentiond ./cmd/retentiond
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/retentiond /retentiond
+USER nonroot:nonroot
+ENTRYPOINT ["/retentiond"]

@@ -1,0 +1,18 @@
+[package]
+name = "wirefilter-svc"
+version = "0.1.0"
+edition = "2021"
+description = "Cloudflare rule expression evaluation sidecar. Isolated from the Go backend by process boundary (see research.md R1)."
+
+[dependencies]
+wirefilter-engine = "0.6.1"
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[profile.release]
+strip = true
+lto = true

@@ -1,0 +1,38 @@
+# vmauth: the mandatory gate in front of VictoriaLogs.
+#
+# VictoriaLogs' AccountID/ProjectID headers are ADVISORY — it performs no
+# authentication on them at all, so any client that can reach the port can claim
+# any tenant (research.md R8). This proxy is what turns those headers into a
+# guarantee: callers authenticate here, and the tenant headers are ATTACHED by
+# this config, never accepted from the caller.
+#
+# In the standard deployment only the backend services reach VictoriaLogs, and
+# they inject tenant headers themselves — vmauth is defence in depth for the
+# topology where VictoriaLogs must be reachable by anything else (an ops
+# dashboard, a debugging session). Direct exposure of :9428 is never acceptable.
+
+users:
+  # The backend's own credential. Full query and insert access; the backend
+  # injects per-request tenant headers, which are passed through because they
+  # are set by the one caller trusted to set them.
+  - username: siem-backend
+    password: "%{BACKEND_VMAUTH_PASSWORD}"
+    url_map:
+      - src_paths: ["/insert/.*", "/select/.*", "/internal/.*", "/delete/.*"]
+        url_prefix: "http://victorialogs-hot:9428/"
+
+  # A read-only operator credential, PINNED to tenant 0:0. Whatever headers the
+  # caller sends, these are what VictoriaLogs receives — the caller cannot name
+  # a tenant.
+  - username: siem-operator
+    password: "%{OPERATOR_VMAUTH_PASSWORD}"
+    headers:
+      - "AccountID: 0"
+      - "ProjectID: 0"
+    url_map:
+      - src_paths: ["/select/.*"]
+        url_prefix: "http://victorialogs-hot:9428/"
+
+# Anything not matched above is refused. There is deliberately no default_url.
+unauthorized_user:
+  url_map: []
