@@ -99,7 +99,6 @@ func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 		{"terminating_layer", s.Layer},
 		{"rule_id", s.RuleID},
 		{"country", strings.ToUpper(s.Country)},
-		{"provider", s.Provider},
 		{"completeness", s.Completeness},
 		{"ray_id", s.RayID},
 		{"correlation_method", s.CorrelationMethod},
@@ -138,6 +137,15 @@ func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 	// Word match, not exact match: a flow carries several vendor references in one
 	// field, so the filter must find one among them rather than equal the whole
 	// set.
+	// The flow record's own "provider" field is the constant "correlated";
+	// participation lives in the space-joined providers list, word-matched
+	// exactly like vendor_request_ids.
+	if s.Provider != "" {
+		if !safeValue.MatchString(s.Provider) {
+			return "", &ErrUnsafeValue{Field: "provider", Value: s.Provider}
+		}
+		parts = append(parts, fmt.Sprintf("providers:%s", quote(s.Provider)))
+	}
 	if s.VendorRequestID != "" {
 		if !safeValue.MatchString(s.VendorRequestID) {
 			return "", &ErrUnsafeValue{Field: "support_id", Value: s.VendorRequestID}

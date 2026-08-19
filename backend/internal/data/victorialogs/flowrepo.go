@@ -130,6 +130,9 @@ func flowDocument(f *flow.Flow) Document {
 			// Each provider's own reference, so an investigation that begins in a
 			// vendor console can find the flow by the id that console showed.
 			"vendor_request_ids": vendorRequestIDsJoined(f),
+			// Participating providers, space-joined for word-matching — the
+			// record's own "provider" field is the constant "correlated".
+			"providers":          providersJoined(f),
 			"asn":                f.Client.ASN,
 			"data_quality_flags": strings.Join(qualityFlags(f), " "),
 		},
@@ -259,6 +262,19 @@ func qualityFlags(f *flow.Flow) []string {
 // Returned SPACE-DELIMITED rather than as an array. VictoriaLogs flattens an
 // array to its JSON representation — `["9911..."]` — which no exact-match filter
 // can hit. A delimited string keeps each id individually matchable as a word.
+func providersJoined(f *flow.Flow) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range f.Events {
+		p := string(e.Provider)
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 func vendorRequestIDsJoined(f *flow.Flow) string {
 	return strings.Join(vendorRequestIDs(f), " ")
 }

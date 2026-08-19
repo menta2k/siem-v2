@@ -161,3 +161,21 @@ func TestEnrichedFiltersRejectInjection(t *testing.T) {
 		}
 	}
 }
+
+// TestProviderFiltersOnParticipation: the flow record's own "provider" field
+// is the literal "correlated" (it distinguishes nothing — record_kind does
+// that), so filtering must match the PARTICIPATING providers word-list. The
+// bug this pins: provider:=nginx against provider="correlated" matched
+// nothing, ever.
+func TestProviderFiltersOnParticipation(t *testing.T) {
+	q, err := BuildFlowQuery("acme", FlowSearch{Provider: "f5asm", Limit: 10})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(q, `providers:"f5asm"`) {
+		t.Fatalf("provider must word-match the providers list, got: %s", q)
+	}
+	if strings.Contains(q, `provider:=`) {
+		t.Fatalf("exact match on the flow record's constant provider field can never match: %s", q)
+	}
+}
