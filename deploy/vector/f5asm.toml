@@ -10,9 +10,15 @@
 # invisible to everyone.
 
 [sources.f5_syslog]
-type = "syslog"
+# A raw socket, NOT the syslog codec (v1's choice, relearned here): the syslog
+# decoder REJECTS frames that are not valid UTF-8, and ASM's captured request
+# bodies contain raw binary precisely on the interesting events — exploit
+# payloads. The raw socket keeps the line (lossy-decoded) instead of dropping
+# it; the SIEM's parser scrapes key="value" pairs past the syslog header.
+type = "socket"
 address = "0.0.0.0:5514"
 mode = "tcp"   # TCP, not UDP: ASM supports it and datagram loss is silent
+framing.method = "newline_delimited"
 
 [transforms.f5_passthrough]
 type = "remap"
