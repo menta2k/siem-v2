@@ -19,7 +19,9 @@ const identities = [
 ]
 
 const tenant = computed(() => (identity.value.includes('globex') ? 'Globex Inc' : 'Acme Corp'))
-const role = computed(() => identity.value.split('@')[0])
+// A real session's role always wins; the dev-identity prefix is the fallback
+// that keeps nav gating working when SIEM_DEV_IDENTITIES drives auth.
+const role = computed(() => user.value?.role ?? identity.value.split('@')[0])
 
 // Items are hidden when the role cannot use them. This is navigation hygiene,
 // NOT access control — every route and every API call behind it is enforced
