@@ -23,14 +23,17 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    # Credentials come from .env (see .env.example); the defaults keep a bare
+    # `docker compose up` working for local development and are obviously
+    # dev-only values, never production ones.
     environment:
-      POSTGRES_USER: siem
-      POSTGRES_PASSWORD: siem_dev_only
-      POSTGRES_DB: siem
+      POSTGRES_USER: ${SIEM_PG_USER:-siem}
+      POSTGRES_PASSWORD: ${SIEM_PG_PASSWORD:-siem_dev_only}
+      POSTGRES_DB: ${SIEM_PG_DB:-siem}
     ports: ["55432:5432"]   # host port shifted: 5432 is taken by another local stack
     volumes: ["pg:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U siem"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
 
   valkey:
@@ -49,8 +52,8 @@ services:
   rustfs:
     image: rustfs/rustfs:latest
     environment:
-      RUSTFS_ACCESS_KEY: siem_dev
-      RUSTFS_SECRET_KEY: siem_dev_only
+      RUSTFS_ACCESS_KEY: ${SIEM_S3_ACCESS_KEY:-siem_dev}
+      RUSTFS_SECRET_KEY: ${SIEM_S3_SECRET_KEY:-siem_dev_only}
     ports: ["9000:9000"]
     volumes: ["rustfs:/data"]
 
