@@ -61,6 +61,7 @@ type apiServer struct {
 	authSvc    *service.AuthService
 	feeds      *service.FeedService
 	filters    *service.FilterService
+	rawRet     *postgres.RawRetentionRepo
 	asnNames   *asnowner.Resolver
 	vl         *victorialogs.Client
 	vlTenant   victorialogs.Tenant
@@ -101,6 +102,11 @@ func run(confPath string, logger *slog.Logger) error {
 	}
 
 	vl := victorialogs.New(cfg.Storage.VictoriaLogs.Hot, nil)
+	rawURL := cfg.Storage.VictoriaLogs.Raw
+	if rawURL == "" {
+		rawURL = cfg.Storage.VictoriaLogs.Hot
+	}
+	vlRaw := victorialogs.New(rawURL, nil)
 	if err := vl.Ping(context.Background()); err != nil {
 		return fmt.Errorf("victorialogs unreachable: %w", err)
 	}
@@ -132,7 +138,7 @@ func run(confPath string, logger *slog.Logger) error {
 
 	s := &apiServer{
 		pool:       pool,
-		repo:       victorialogs.NewFlowRepo(vl, tenant),
+		repo:       victorialogs.NewFlowRepo(vl, tenant).WithRawClient(vlRaw),
 		engine:     engine,
 		owaspCfg:   owaspCfg,
 		health:     observability.NewRegistry(),
@@ -155,6 +161,7 @@ func run(confPath string, logger *slog.Logger) error {
 	s.authSvc = authSvc
 	s.feeds = &service.FeedService{Repo: postgres.NewFeedRepo(pool), Sources: postgres.NewSourceRepo(pool)}
 	s.filters = &service.FilterService{Repo: postgres.NewFilterRepo(pool)}
+	s.rawRet = postgres.NewRawRetentionRepo(pool)
 
 	if err := s.seedDev(ctx0()); err != nil {
 		return fmt.Errorf("seed: %w", err)
@@ -228,6 +235,8 @@ func (s *apiServer) routes() http.Handler {
 	// individually — seeing a classified field is an event, not a mode (FR-056).
 	api.HandleFunc("GET /api/v1/flows/{flowID}/sensitive",
 		server.RequirePermission(tenancy.PermViewSensitive, audit, s.getFlowSensitive))
+	api.HandleFunc("GET /api/v1/flows/{flowID}/raw",
+		server.RequirePermission(tenancy.PermViewRaw, audit, s.getFlowRaw))
 	api.HandleFunc("POST /api/v1/flows/{flowID}/export",
 		server.RequirePermission(tenancy.PermExport, audit, s.exportFlow))
 	api.HandleFunc("POST /api/v1/sources",
@@ -252,6 +261,10 @@ func (s *apiServer) routes() http.Handler {
 		server.RequirePermission(tenancy.PermManageSources, audit, s.filters.Get))
 	api.HandleFunc("POST /api/v1/filters",
 		server.RequirePermission(tenancy.PermManageSources, audit, s.filters.Set))
+	api.HandleFunc("GET /api/v1/settings/raw-retention",
+		server.RequirePermission(tenancy.PermManageRetention, audit, s.getRawRetention))
+	api.HandleFunc("POST /api/v1/settings/raw-retention",
+		server.RequirePermission(tenancy.PermManageRetention, audit, s.setRawRetention))
 
 	// CORS wraps the authenticated API so a preflight is answered before
 	// authentication runs — a browser preflight carries no credentials by design.
@@ -427,6 +440,53 @@ func (s *apiServer) getFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, f)
+}
+
+// getFlowRaw returns the unmodified provider records for a flow — the evidence
+// behind the reconstruction. Behind view_raw and audited by the routing table.
+func (s *apiServer) getFlowRaw(w http.ResponseWriter, r *http.Request) {
+	records, err := s.repo.RawForFlow(r.Context(), tenantOf(r), r.PathValue("flowID"))
+	if err != nil {
+		var unsafe *victorialogs.ErrUnsafeValue
+		if errors.As(err, &unsafe) {
+			writeError(w, apierrors.InvalidInput("The flow id is not valid.", err.Error()))
+			return
+		}
+		writeError(w, apierrors.Internal(err.Error()))
+		return
+	}
+	if records == nil {
+		records = []flow.RawRecord{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"raw": records})
+}
+
+func (s *apiServer) getRawRetention(w http.ResponseWriter, r *http.Request) {
+	days, err := s.rawRet.Get(r.Context(), tenantOf(r))
+	if err != nil {
+		writeError(w, apierrors.Internal(err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"days":     days,
+		"min_days": postgres.RawRetentionMinDays,
+		"max_days": postgres.RawRetentionMaxDays,
+	})
+}
+
+func (s *apiServer) setRawRetention(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Days int `json:"days"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		writeError(w, apierrors.InvalidInput("The request body could not be read.", err.Error()))
+		return
+	}
+	if err := s.rawRet.Set(r.Context(), tenantOf(r), req.Days); err != nil {
+		writeError(w, apierrors.InvalidInput("The retention window is not valid.", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"days": req.Days})
 }
 
 func (s *apiServer) createEvaluation(w http.ResponseWriter, r *http.Request) {

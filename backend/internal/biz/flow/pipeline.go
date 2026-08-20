@@ -153,9 +153,15 @@ func (p *Pipeline) ProcessBatch(ctx context.Context, batch ingest.RawBatch) erro
 			continue
 		}
 		event.Tenant = batch.Tenant
-		kept = append(kept, RawItem{
-			ID: fmt.Sprintf("%s:%s", batch.Provider, hashOf(raw)), Payload: raw,
-		})
+		// Store the raw under the SAME id the event carries, so the flow's
+		// events can retrieve their evidence. A stable id (cf:<ray>,
+		// f5:<support_id>, ...) also dedups redelivery. Fall back to a content
+		// hash only when the parser produced no id.
+		rawID := event.RawID
+		if rawID == "" {
+			rawID = fmt.Sprintf("%s:%s", batch.Provider, hashOf(raw))
+		}
+		kept = append(kept, RawItem{ID: rawID, Payload: raw})
 		events = append(events, *event)
 	}
 	if filtered > 0 && p.OnFiltered != nil {

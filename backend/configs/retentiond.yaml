@@ -12,6 +12,7 @@ storage:
   victorialogs:
     hot: "http://localhost:9428"
     warm: "http://localhost:9429"
+    raw: "http://localhost:9430"
     account_id: 0
     project_id: 0
   jetstream:

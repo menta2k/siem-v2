@@ -15,11 +15,29 @@ import (
 // FlowRepo stores and retrieves materialized flows.
 type FlowRepo struct {
 	client *Client
+	// raw points at the VictoriaLogs instance that holds unmodified provider
+	// records. It is a distinct instance because raw evidence carries its own,
+	// shorter retention (VictoriaLogs retention is a per-instance flag; there is
+	// no delete-by-query, so a different retention needs a different instance).
+	// When unset it falls back to the main client so single-instance dev stacks
+	// keep working.
+	raw    *Client
 	tenant Tenant
 }
 
 func NewFlowRepo(c *Client, t Tenant) *FlowRepo {
-	return &FlowRepo{client: c, tenant: t}
+	return &FlowRepo{client: c, raw: c, tenant: t}
+}
+
+// WithRawClient points raw reads and writes at a dedicated retention instance.
+// A nil client leaves raw storage co-located with flows.
+func (r *FlowRepo) WithRawClient(raw *Client) *FlowRepo {
+	if raw == nil {
+		return r
+	}
+	clone := *r
+	clone.raw = raw
+	return &clone
 }
 
 // Store writes a flow plus its contributing events.
@@ -65,7 +83,7 @@ func (r *FlowRepo) StoreRaw(ctx context.Context, tenant string, provider schema.
 			},
 		})
 	}
-	return r.client.Insert(ctx, r.tenant, docs)
+	return r.raw.Insert(ctx, r.tenant, docs)
 }
 
 // FlowFieldCounts groups closed flows by one field over a window and counts
@@ -398,7 +416,7 @@ func (r *FlowRepo) RawForFlow(ctx context.Context, tenantID, flowID string) ([]f
 			// whole export: the remaining records are still evidence.
 			continue
 		}
-		rows, err := r.client.Query(ctx, r.tenant, q, 1)
+		rows, err := r.raw.Query(ctx, r.tenant, q, 1)
 		if err != nil || len(rows) == 0 {
 			continue
 		}

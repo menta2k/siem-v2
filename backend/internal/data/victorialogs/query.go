@@ -221,3 +221,14 @@ func BuildRawByIDQuery(tenant, rawID string) (string, error) {
 	return fmt.Sprintf(`{tenant=%s,record_kind=%s} raw_id:=%s`,
 		quote(tenant), quote(string(KindRaw)), quote(rawID)), nil
 }
+
+// BuildRawExpiryQuery selects raw records older than the cutoff for a tenant,
+// the filter the scheduled delete task runs to enforce raw retention.
+func BuildRawExpiryQuery(tenant string, olderThan time.Time) (string, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return "", &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	return fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[min, %s)`,
+		quote(tenant), quote(string(KindRaw)),
+		olderThan.UTC().Format(time.RFC3339Nano)), nil
+}

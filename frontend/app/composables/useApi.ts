@@ -48,6 +48,14 @@ export interface Flow {
   request: { method?: string; host?: string; path?: string }
 }
 
+export interface RawRecord {
+  raw_id: string
+  provider: string
+  received_at: string
+  payload: string
+  masked_fields?: string[]
+}
+
 export interface FlowSearch {
   from?: string
   to?: string
@@ -124,6 +132,10 @@ export function useApi() {
     })
   }
 
+  async function getFlowRaw(flowId: string): Promise<{ raw: RawRecord[] }> {
+    return await $fetch(`${base}/flows/${encodeURIComponent(flowId)}/raw`, { headers: headers() })
+  }
+
   async function getFlow(flowId: string): Promise<Flow> {
     return await $fetch(`${base}/flows/${encodeURIComponent(flowId)}`, { headers: headers() })
   }
@@ -136,7 +148,7 @@ export function useApi() {
     return await $fetch(`${base}/health/collection`, { headers: headers() })
   }
 
-  return { identity, headers, searchFlows, getFlow, evaluate, collectionHealth }
+  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth }
 }
 
 /** Human label for a layer. */

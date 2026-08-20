@@ -163,6 +163,32 @@ func (c *Client) Query(ctx context.Context, tenant Tenant, logsQL string, limit 
 	return out, nil
 }
 
+// DeleteByQuery removes every record matching the LogsQL filter. It drives
+// scheduled raw-evidence expiry: VictoriaLogs has no per-record TTL, so a
+// shorter retention class is enforced by periodically deleting what has aged
+// out. Requires the instance to run with -delete.enable (research.md R7).
+func (c *Client) DeleteByQuery(ctx context.Context, tenant Tenant, logsQL string) error {
+	form := url.Values{"filter": {logsQL}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/delete/run_task", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setTenant(req, tenant)
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("victorialogs delete: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("victorialogs delete returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	return nil
+}
+
 // Ping reports whether the instance is reachable.
 func (c *Client) Ping(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/select/logsql/query?query=*&limit=1", nil)

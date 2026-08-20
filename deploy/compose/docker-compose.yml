@@ -21,6 +21,20 @@ services:
     ports: ["9429:9429"]
     volumes: ["vl-warm:/vlogs"]
 
+  victorialogs-raw:
+    image: victoriametrics/victoria-logs:latest
+    command:
+      - -storageDataPath=/vlogs
+      # Raw provider evidence carries its own, shorter retention. The instance
+      # flag is a ceiling; the UI-configurable window (default 7d) is enforced
+      # within it by retentiond's scheduled delete task, which needs
+      # -delete.enable. RAW_RETENTION_MAX_DAYS caps how long anything can live.
+      - -retentionPeriod=${RAW_RETENTION_MAX_DAYS:-30}d
+      - -httpListenAddr=:9430
+      - -delete.enable
+    ports: ["9430:9430"]
+    volumes: ["vl-raw:/vlogs"]
+
   postgres:
     image: postgres:17-alpine
     # Credentials come from .env (see .env.example); the defaults keep a bare
@@ -118,6 +132,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       victorialogs-hot: { condition: service_started }
+      victorialogs-raw: { condition: service_started }
       nats: { condition: service_started }
 
   retentiond:
@@ -136,6 +151,7 @@ services:
       - ./configs/retentiond.yaml:/etc/siem/retentiond.yaml:ro
     depends_on:
       postgres: { condition: service_healthy }
+      victorialogs-raw: { condition: service_started }
       rustfs: { condition: service_started }
 
   frontend:
@@ -244,6 +260,7 @@ volumes:
   vector-f5:
   vl-hot:
   vl-warm:
+  vl-raw:
   pg:
   valkey:
   nats:

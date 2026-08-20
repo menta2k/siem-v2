@@ -36,6 +36,7 @@ const navItems = computed(() => [
   { title: 'Ingest filters', icon: 'mdi-filter-remove-outline', to: '/filters', visible: role.value === 'admin' || role.value === 'engineer' },
   { title: 'Audit', icon: 'mdi-clipboard-text-clock', to: '/audit', visible: role.value === 'admin' },
   { title: 'Users', icon: 'mdi-account-multiple', to: '/users', visible: role.value === 'admin' },
+  { title: 'Settings', icon: 'mdi-cog-outline', to: '/settings', visible: role.value === 'admin' },
 ])
 
 const visibleItems = computed(() => navItems.value.filter((i) => i.visible))

@@ -41,6 +41,7 @@ export function useAuth() {
       viewAudit: perms.has('view_audit'),
       export: perms.has('export'),
       viewSensitive: perms.has('view_sensitive'),
+      viewRaw: perms.has('view_raw'),
       manageUsers: perms.has('manage_users'),
       manageSources: perms.has('manage_sources'),
       manageRetention: perms.has('manage_retention'),

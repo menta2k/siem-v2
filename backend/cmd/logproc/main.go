@@ -73,6 +73,11 @@ func run(confPath string, logger *slog.Logger) error {
 	logger.Info("connected to ingest buffer", "url", cfg.Storage.JetStream.URL)
 
 	vl := victorialogs.New(cfg.Storage.VictoriaLogs.Hot, nil)
+	rawURL := cfg.Storage.VictoriaLogs.Raw
+	if rawURL == "" {
+		rawURL = cfg.Storage.VictoriaLogs.Hot
+	}
+	vlRaw := victorialogs.New(rawURL, nil)
 	tenant := victorialogs.Tenant{
 		AccountID: cfg.Storage.VictoriaLogs.AccountID,
 		ProjectID: cfg.Storage.VictoriaLogs.ProjectID,
@@ -83,7 +88,7 @@ func run(confPath string, logger *slog.Logger) error {
 	logger.Info("connected to victorialogs", "url", cfg.Storage.VictoriaLogs.Hot)
 
 	health := observability.NewRegistry()
-	pipeline := buildPipeline(vl, tenant, cfg, health, logger)
+	pipeline := buildPipeline(vl, vlRaw, tenant, cfg, health, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -173,10 +178,10 @@ func run(confPath string, logger *slog.Logger) error {
 	return srv.Shutdown(shutdownCtx)
 }
 
-func buildPipeline(vl *victorialogs.Client, tenant victorialogs.Tenant,
+func buildPipeline(vl, vlRaw *victorialogs.Client, tenant victorialogs.Tenant,
 	cfg *conf.Config, health *observability.Registry, logger *slog.Logger) *flow.Pipeline {
 
-	repo := victorialogs.NewFlowRepo(vl, tenant)
+	repo := victorialogs.NewFlowRepo(vl, tenant).WithRawClient(vlRaw)
 	w := window.New(window.Options{
 		LateArrival:    cfg.Correlate.LateArrivalWindow,
 		ExpectedLayers: 4,

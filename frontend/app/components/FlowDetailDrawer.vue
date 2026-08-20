@@ -10,8 +10,25 @@ import type { Flow } from '~/composables/useApi'
  * what makes "check this one, then the next" actually work.
  */
 const { open, flowId } = useFlowDrawer()
-const { getFlow, identity } = useApi()
+const { getFlow, getFlowRaw, identity } = useApi()
+const { can } = useAuth()
 const flow = ref<Flow | null>(null)
+const rawRecords = ref<any[] | null>(null)
+const rawError = ref('')
+const rawLoading = ref(false)
+
+async function loadRaw() {
+  if (!flow.value) return
+  rawLoading.value = true; rawError.value = ''
+  try {
+    const res = await getFlowRaw(flow.value.flow_id)
+    rawRecords.value = res.raw ?? []
+  } catch (e) {
+    rawError.value = toDisplayMessage(e, 'The raw evidence could not be loaded.')
+  } finally {
+    rawLoading.value = false
+  }
+}
 const loading = ref(false)
 const error = ref('')
 
@@ -21,6 +38,8 @@ async function load(id: string) {
   flow.value = null
   try {
     flow.value = await getFlow(id)
+    rawRecords.value = null
+    rawError.value = ''
   } catch (e) {
     error.value = toDisplayMessage(e, 'This flow could not be loaded.')
   } finally {
@@ -78,6 +97,36 @@ watch(identity, () => { if (flowId.value && open.value) load(flowId.value) })
                 </tr>
               </tbody>
             </v-table>
+          </v-card-text>
+        </v-card>
+
+        <v-card v-if="can.viewRaw" class="mb-4" data-test="raw-evidence">
+          <v-card-title class="d-flex align-center text-subtitle-2">
+            Raw evidence
+            <v-spacer />
+            <v-btn
+              v-if="rawRecords === null" size="small" variant="text"
+              :loading="rawLoading" @click="loadRaw"
+            >Show originals</v-btn>
+          </v-card-title>
+          <v-card-text v-if="rawRecords !== null">
+            <v-alert v-if="rawError" type="error" variant="tonal" density="compact" class="mb-2">{{ rawError }}</v-alert>
+            <div v-if="!rawRecords.length" class="text-caption text-medium-emphasis">
+              No raw records retained for this flow (they may have passed their retention window).
+            </div>
+            <v-expansion-panels v-else variant="accordion">
+              <v-expansion-panel
+                v-for="rec in rawRecords" :key="rec.raw_id"
+                :title="`${rec.provider} — original record`"
+              >
+                <v-expansion-panel-text>
+                  <div v-if="rec.masked_fields?.length" class="text-caption text-warning mb-1">
+                    Masked before storage: {{ rec.masked_fields.join(', ') }}
+                  </div>
+                  <pre class="text-caption" style="white-space:pre-wrap; word-break:break-all">{{ rec.payload }}</pre>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
           </v-card-text>
         </v-card>
 

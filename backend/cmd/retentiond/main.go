@@ -19,6 +19,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/conf"
 	"github.com/menta2k/siem-v2/backend/internal/data/objectstore"
 	"github.com/menta2k/siem-v2/backend/internal/data/postgres"
+	"github.com/menta2k/siem-v2/backend/internal/data/victorialogs"
 	"github.com/menta2k/siem-v2/backend/internal/version"
 )
 
@@ -87,8 +88,23 @@ func run(confPath string, migrateOnly bool, logger *slog.Logger) error {
 		logger.Info("bucket ready", "bucket", bucket.name, "object_lock", bucket.lock)
 	}
 
+	rawURL := cfg.Storage.VictoriaLogs.Raw
+	if rawURL == "" {
+		rawURL = cfg.Storage.VictoriaLogs.Hot
+	}
+	vlRaw := victorialogs.New(rawURL, nil)
+	vlTenant := victorialogs.Tenant{
+		AccountID: cfg.Storage.VictoriaLogs.AccountID,
+		ProjectID: cfg.Storage.VictoriaLogs.ProjectID,
+	}
+	rawRetention := postgres.NewRawRetentionRepo(pool)
+
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Enforce raw retention once at startup, then on every tick, so a shortened
+	// window takes effect within the hour rather than waiting for the next boot.
+	expireRaw(sigCtx, vlRaw, vlTenant, rawRetention, logger)
 
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
@@ -105,6 +121,32 @@ func run(confPath string, migrateOnly bool, logger *slog.Logger) error {
 			// the service refuses to expire anything rather than risk deleting
 			// held evidence.
 			logger.Info("retention pass starting")
+			expireRaw(sigCtx, vlRaw, vlTenant, rawRetention, logger)
 		}
+	}
+}
+
+// expireRaw deletes raw provider records older than each tenant's configured
+// window from the raw VictoriaLogs instance. It is best-effort per tenant: one
+// tenant's failure is logged and does not block the others.
+func expireRaw(ctx context.Context, vlRaw *victorialogs.Client, tenant victorialogs.Tenant,
+	repo *postgres.RawRetentionRepo, logger *slog.Logger) {
+	windows, err := repo.All(ctx)
+	if err != nil {
+		logger.Warn("raw retention: cannot read windows", "error", err)
+		return
+	}
+	for tenantID, days := range windows {
+		cutoff := time.Now().UTC().AddDate(0, 0, -days)
+		q, err := victorialogs.BuildRawExpiryQuery(tenantID, cutoff)
+		if err != nil {
+			logger.Warn("raw retention: skip tenant", "tenant", tenantID, "error", err)
+			continue
+		}
+		if err := vlRaw.DeleteByQuery(ctx, tenant, q); err != nil {
+			logger.Warn("raw retention: delete failed", "tenant", tenantID, "days", days, "error", err)
+			continue
+		}
+		logger.Info("raw retention: expired", "tenant", tenantID, "older_than_days", days)
 	}
 }

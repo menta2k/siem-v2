@@ -50,6 +50,10 @@ type Storage struct {
 type VictoriaLogs struct {
 	Hot  string `yaml:"hot"`
 	Warm string `yaml:"warm"`
+	// Raw addresses the dedicated instance holding unmodified provider records,
+	// which carry a shorter, independently configurable retention. Empty means
+	// co-locate raw with Hot (single-instance dev stacks).
+	Raw string `yaml:"raw"`
 	// Tenant headers are injected server-side only; clients never supply them (R8).
 	AccountID uint32 `yaml:"account_id"`
 	ProjectID uint32 `yaml:"project_id"`
