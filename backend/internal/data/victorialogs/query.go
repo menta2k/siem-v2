@@ -53,6 +53,10 @@ type FlowSearch struct {
 	HasQualityFlag string
 
 	Limit int
+	// Offset is the pagination cursor. Meaningful only because the query sorts
+	// by _time before slicing — an unsorted offset would return an arbitrary,
+	// overlapping subset per page.
+	Offset int
 }
 
 // safeValue matches values we are willing to embed in a query at all.
@@ -165,7 +169,21 @@ func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 		parts = append(parts, fmt.Sprintf("user_agent:~%s", quote(s.UserAgentSub)))
 	}
 
-	return strings.Join(parts, " "), nil
+	if s.Offset < 0 {
+		return "", &ErrUnsafeValue{Field: "offset", Value: strconv.Itoa(s.Offset)}
+	}
+	limit := s.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	// Deterministic order BEFORE the slice: newest flows first, then the page
+	// window. This is what makes page N+1 disjoint from page N.
+	paging := fmt.Sprintf(" | sort by (_time desc) | offset %d | limit %d", s.Offset, limit)
+
+	return strings.Join(parts, " ") + paging, nil
 }
 
 // BuildFlowByIDQuery fetches one flow, tenant-scoped.

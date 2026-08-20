@@ -7,6 +7,12 @@ const loading = ref(false)
 const error = ref('')
 const filters = ref<FlowSearch>({ limit: 50 })
 
+// Pagination: pages are meaningful because the server orders newest-first
+// before slicing. A new search (filters applied) always restarts at page 0.
+const PAGE_SIZE = 50
+const page = ref(0)
+const hasMore = ref(false)
+
 // The dashboard's Top networks rows link here as /?asn=N — pre-apply it so
 // the link lands on the filtered result, not on an empty form.
 const route = useRoute()
@@ -16,22 +22,39 @@ if (Number.isFinite(asnParam) && asnParam > 0) filters.value.asn = asnParam
 // The drawer keeps the result set underneath, so working a list stays a list.
 const { flowId: selectedFlowId, show: openFlow } = useFlowDrawer()
 
-async function run() {
+async function run(resetPage = true) {
+  if (resetPage) page.value = 0
   loading.value = true
   error.value = ''
   try {
-    const res = await searchFlows({ ...filters.value })
+    const res = await searchFlows({
+      ...filters.value, limit: PAGE_SIZE, offset: page.value * PAGE_SIZE,
+    })
     flows.value = res.flows ?? []
+    // A full page means there is PROBABLY more; the last page shows shorter.
+    hasMore.value = flows.value.length === PAGE_SIZE
   } catch (e) {
     error.value = toDisplayMessage(e, 'The search could not be completed.')
     flows.value = []
+    hasMore.value = false
   } finally {
     loading.value = false
   }
 }
 
-onMounted(run)
-watch(identity, run)
+function goto(delta: number) {
+  page.value = Math.max(0, page.value + delta)
+  run(false)
+}
+
+function eventTime(iso: string | undefined) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString()
+}
+
+onMounted(() => run())
+watch(identity, () => run())
 </script>
 
 <template>
@@ -56,9 +79,19 @@ watch(identity, run)
 
         <v-card v-if="flows.length">
           <v-card-text class="d-flex align-center py-2 text-caption text-medium-emphasis">
-            <span data-test="count">{{ flows.length }} flow(s)</span>
+            <span data-test="count">
+              {{ flows.length }} flow(s) — page {{ page + 1 }}
+            </span>
             <v-spacer />
-            <v-btn size="small" variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="run">
+            <v-btn
+              size="small" variant="text" prepend-icon="mdi-chevron-left"
+              :disabled="loading || page === 0" data-test="prev-page" @click="goto(-1)"
+            >Prev</v-btn>
+            <v-btn
+              size="small" variant="text" append-icon="mdi-chevron-right"
+              :disabled="loading || !hasMore" data-test="next-page" @click="goto(1)"
+            >Next</v-btn>
+            <v-btn size="small" variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="run(false)">
               Refresh
             </v-btn>
           </v-card-text>
@@ -67,7 +100,7 @@ watch(identity, run)
           <v-table data-test="results">
             <thead>
               <tr>
-                <th>Outcome</th><th>Terminated at</th><th>Host</th><th>Path</th>
+                <th>Time</th><th>Outcome</th><th>Terminated at</th><th>Host</th><th>Path</th>
                 <th>Client</th><th>Layers</th><th>Join</th><th>Quality</th><th/>
               </tr>
             </thead>
@@ -77,6 +110,7 @@ watch(identity, run)
                 :class="{ 'bg-surface-bright': f.flow_id === selectedFlowId }"
                 @click="openFlow(f.flow_id)"
               >
+                <td class="text-caption text-no-wrap" :title="'first event ' + eventTime(f.first_seen)">{{ eventTime(f.last_seen) }}</td>
                 <td><VerdictBadge :action="f.effective_outcome" /></td>
                 <td class="text-caption">
                   <span v-if="f.terminating_layer">{{ layerLabel(f.terminating_layer) }}</span>

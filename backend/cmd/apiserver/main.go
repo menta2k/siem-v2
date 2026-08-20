@@ -364,6 +364,7 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		MaxLayers         int       `json:"max_layers"`
 		QualityFlag       string    `json:"quality_flag"`
 		Limit             int       `json:"limit"`
+		Offset            int       `json:"offset"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeError(w, apierrors.InvalidInput("The request body could not be read.", err.Error()))
@@ -383,7 +384,7 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		Bridged:           req.Bridged, ASN: req.ASN,
 		MinLayers: req.MinLayers, MaxLayers: req.MaxLayers,
 		HasQualityFlag: req.QualityFlag,
-		Limit:          req.Limit,
+		Limit:          req.Limit, Offset: req.Offset,
 	})
 	if err != nil {
 		var unsafe *victorialogs.ErrUnsafeValue
@@ -397,7 +398,9 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"flows": flows, "count": len(flows)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"flows": flows, "count": len(flows), "offset": req.Offset,
+	})
 }
 
 func (s *apiServer) getFlow(w http.ResponseWriter, r *http.Request) {

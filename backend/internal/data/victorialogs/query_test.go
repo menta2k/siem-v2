@@ -179,3 +179,36 @@ func TestProviderFiltersOnParticipation(t *testing.T) {
 		t.Fatalf("exact match on the flow record's constant provider field can never match: %s", q)
 	}
 }
+
+// TestPaginationIsDeterministic: pages only mean anything when the server
+// orders results before slicing them. Without an explicit sort, VictoriaLogs
+// returns an arbitrary subset and consecutive pages can overlap or skip.
+func TestPaginationIsDeterministic(t *testing.T) {
+	q, err := BuildFlowQuery("acme", FlowSearch{Limit: 50, Offset: 100})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	for _, want := range []string{"| sort by (_time desc)", "| offset 100", "| limit 50"} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("query must carry %q for stable pages, got: %s", want, q)
+		}
+	}
+	// The sort must come BEFORE offset/limit or the slice is of unsorted rows.
+	if strings.Index(q, "sort by") > strings.Index(q, "offset") {
+		t.Fatalf("sort must precede offset: %s", q)
+	}
+}
+
+func TestLimitIsBoundedAndDefaulted(t *testing.T) {
+	q, _ := BuildFlowQuery("acme", FlowSearch{})
+	if !strings.Contains(q, "| limit 50") {
+		t.Fatalf("default page size must be 50: %s", q)
+	}
+	q, _ = BuildFlowQuery("acme", FlowSearch{Limit: 100000})
+	if !strings.Contains(q, "| limit 1000") {
+		t.Fatalf("page size must be capped at 1000: %s", q)
+	}
+	if _, err := BuildFlowQuery("acme", FlowSearch{Offset: -1}); err == nil {
+		t.Fatal("negative offset must be refused")
+	}
+}

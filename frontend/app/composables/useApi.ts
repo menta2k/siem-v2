@@ -42,6 +42,7 @@ export interface Flow {
   effective_outcome: string
   terminating_layer?: string
   first_seen: string
+  last_seen: string
   data_quality_flags?: string[]
   client: { ip?: string; country?: string; user_agent?: string }
   request: { method?: string; host?: string; path?: string }
@@ -72,6 +73,8 @@ export interface FlowSearch {
   max_layers?: number
   quality_flag?: string
   limit?: number
+  /** Pagination cursor: results are ordered newest-first server-side. */
+  offset?: number
 }
 
 export function useApi() {

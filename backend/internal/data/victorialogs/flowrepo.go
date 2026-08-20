@@ -71,11 +71,9 @@ func (r *FlowRepo) Search(ctx context.Context, tenant string, s FlowSearch) ([]*
 	if err != nil {
 		return nil, err
 	}
-	limit := s.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := r.client.Query(ctx, r.tenant, q, limit)
+	// The query's own limit/offset pipes control the page; passing the URL
+	// limit parameter as well would truncate AFTER the offset was applied.
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
 	if err != nil {
 		return nil, err
 	}
