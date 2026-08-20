@@ -18,9 +18,13 @@ import (
 // ported from v1's feed model. Every operation is tenant-scoped from the
 // caller and mounted behind manage_sources.
 type FeedService struct {
-	Repo  *postgres.FeedRepo
-	Audit Auditor
-	Now   func() time.Time
+	Repo *postgres.FeedRepo
+	// Sources receives the matching log_source row when a feed is created: the
+	// Sources page tracks health BY FEED ID, and a feed without a source row
+	// delivers happily while remaining invisible to silence detection.
+	Sources *postgres.SourceRepo
+	Audit   Auditor
+	Now     func() time.Time
 }
 
 func (s *FeedService) now() time.Time {
@@ -108,6 +112,18 @@ func (s *FeedService) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		writeAuthErr(w, apierrors.Internal(err.Error()))
 		return
+	}
+	if s.Sources != nil {
+		if err := s.Sources.Upsert(r.Context(), caller.TenantID, postgres.SourceRow{
+			ID: feedID, Provider: req.Provider, DeliveryMode: "push",
+			ExpectedCadenceSeconds: 900, DataClassification: "standard",
+			ParserVersion:    req.Provider + "/1.0",
+			DetectionPosture: "pipeline.source_silence",
+			Enabled:          true, HealthState: "awaiting_first_record",
+		}); err != nil {
+			writeAuthErr(w, apierrors.Internal(err.Error()))
+			return
+		}
 	}
 	s.audit(caller, "feed.created", feedID, map[string]any{"provider": req.Provider, "name": req.Name})
 	row.CreatedAt, row.TokenRotatedAt = s.now(), s.now()

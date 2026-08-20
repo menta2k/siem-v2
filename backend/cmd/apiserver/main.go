@@ -152,7 +152,7 @@ func run(confPath string, logger *slog.Logger) error {
 		return fmt.Errorf("auth: %w", err)
 	}
 	s.authSvc = authSvc
-	s.feeds = &service.FeedService{Repo: postgres.NewFeedRepo(pool)}
+	s.feeds = &service.FeedService{Repo: postgres.NewFeedRepo(pool), Sources: postgres.NewSourceRepo(pool)}
 
 	if err := s.seedDev(ctx0()); err != nil {
 		return fmt.Errorf("seed: %w", err)

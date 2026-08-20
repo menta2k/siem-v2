@@ -40,7 +40,7 @@ func TestFeedManagement(t *testing.T) {
 	name := "edge-" + time.Now().Format("150405.000000000")
 
 	repo := postgres.NewFeedRepo(pool)
-	svc := &service.FeedService{Repo: repo}
+	svc := &service.FeedService{Repo: repo, Sources: postgres.NewSourceRepo(pool)}
 	admin := &tenancy.Principal{ID: "fm-admin", TenantID: "fm-acme", Role: tenancy.RoleAdmin, Active: true}
 	outsider := &tenancy.Principal{ID: "fm-out", TenantID: "fm-globex", Role: tenancy.RoleAdmin, Active: true}
 
@@ -83,6 +83,23 @@ func TestFeedManagement(t *testing.T) {
 		}
 		if rec := do(admin, http.MethodPost, "/api/v1/feeds", `{"provider":"exotic","name":"x-`+name+`"}`); rec.Code != http.StatusBadRequest {
 			t.Errorf("an unknown provider must 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("create auto-registers the matching source row", func(t *testing.T) {
+		// The Sources page tracks health BY FEED ID. A feed without a source
+		// row delivers happily while remaining invisible to silence detection
+		// — the unwatched-by-default state the constitution forbids.
+		var provider, state string
+		var cadence int
+		err := pool.QueryRow(ctx, `SELECT provider, health_state, expected_cadence_seconds
+			FROM log_source WHERE id = $1 AND tenant_id = 'fm-acme'`, feedID).
+			Scan(&provider, &state, &cadence)
+		if err != nil {
+			t.Fatalf("a created feed must have a matching source row: %v", err)
+		}
+		if provider != "nginx" || state != "awaiting_first_record" || cadence <= 0 {
+			t.Errorf("source row: provider=%q state=%q cadence=%d", provider, state, cadence)
 		}
 	})
 

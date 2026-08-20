@@ -85,3 +85,14 @@ func (r *SourceRepo) RecordDelivery(ctx context.Context, sourceID string, at tim
 		sourceID, at)
 	return err
 }
+
+// UpdateHealth writes the observed health of one source. Called by logproc's
+// silence loop, which is the only component that actually SEES deliveries —
+// the apiserver only reads this table.
+func (r *SourceRepo) UpdateHealth(ctx context.Context, sourceID, state string, lastRecordAt *time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE log_source SET health_state = $2,
+			last_record_at = COALESCE($3, last_record_at)
+		WHERE id = $1`, sourceID, state, lastRecordAt)
+	return err
+}

@@ -138,3 +138,16 @@ func TestReRegisteringKeepsTheHistory(t *testing.T) {
 		t.Fatal("a silent source must degrade overall health")
 	}
 }
+
+// TestSourcesExposesStateForSyncing: the PG sync loop reads the registry's
+// full view; states must reflect the last evaluation.
+func TestSourcesExposesStateForSyncing(t *testing.T) {
+	r := NewRegistry()
+	r.RegisterSource("feed-a", "nginx", 15*time.Minute)
+	r.RecordDelivery("feed-a", 5, time.Now().Add(-time.Hour))
+	r.EvaluateSilence(time.Now())
+	list := r.Sources()
+	if len(list) != 1 || list[0].State != StateSilent {
+		t.Fatalf("Sources() must carry the evaluated state, got %+v", list)
+	}
+}

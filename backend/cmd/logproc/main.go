@@ -87,7 +87,7 @@ func run(confPath string, logger *slog.Logger) error {
 	// Per-feed ingest credentials live in Postgres, served here from a
 	// refreshed in-memory snapshot. Postgres being down keeps ingest running
 	// on the last snapshot; only a store that has NEVER loaded answers 503.
-	feedStore := buildFeedStore(ctx, cfg, health, logger)
+	feedStore, sourceRepo := buildFeedStore(ctx, cfg, health, logger)
 
 	srv := ingestServer(cfg, buffer, health, feedStore, logger)
 	go func() {
@@ -100,7 +100,7 @@ func run(confPath string, logger *slog.Logger) error {
 
 	go consume(ctx, buffer, pipeline, health, logger)
 	go flushLoop(ctx, pipeline, logger)
-	go silenceLoop(ctx, health, logger)
+	go silenceLoop(ctx, health, sourceRepo, logger)
 
 	<-ctx.Done()
 	logger.Info("shutting down")
@@ -165,23 +165,23 @@ func (l feedLister) ListEnabled(ctx context.Context) ([]feedauth.Feed, error) {
 // DSN or unreachable database does not stop ingest — the legacy shared-secret
 // routes keep working and the feed routes answer 503 until the first load.
 func buildFeedStore(ctx context.Context, cfg *conf.Config,
-	health *observability.Registry, logger *slog.Logger) *feedauth.Store {
+	health *observability.Registry, logger *slog.Logger) (*feedauth.Store, *postgres.SourceRepo) {
 
 	dsn := os.Getenv("SIEM_PG_DSN")
 	if dsn == "" {
 		logger.Warn("SIEM_PG_DSN unset; per-feed ingest routes will answer 503")
-		return feedauth.NewStore(feedLister{}, 30*time.Second, logger)
+		return feedauth.NewStore(feedLister{}, 30*time.Second, logger), nil
 	}
 	pool, err := postgres.Connect(ctx, dsn, int32(cfg.Storage.Postgres.MaxConns), cfg.Storage.Postgres.MinConns)
 	if err != nil {
 		// Ingest must outlive a database outage at startup: the legacy routes
 		// keep working and the feed routes answer 503 (senders retry).
 		logger.Warn("postgres unreachable; per-feed ingest routes will answer 503", "error", err)
-		return feedauth.NewStore(feedLister{}, 30*time.Second, logger)
+		return feedauth.NewStore(feedLister{}, 30*time.Second, logger), nil
 	}
 	store := feedauth.NewStore(feedLister{repo: postgres.NewFeedRepo(pool)}, 30*time.Second, logger)
 	go store.Run(ctx)
-	return store
+	return store, postgres.NewSourceRepo(pool)
 }
 
 func ingestServer(cfg *conf.Config, buffer *jetstream.Buffer,
@@ -296,7 +296,8 @@ func flushLoop(ctx context.Context, pipeline *flow.Pipeline, logger *slog.Logger
 // marking only happens when someone asks, and until this loop existed nobody
 // did in production: /health reported "healthy" through hours of silence
 // because the evaluation only ever ran inside a test.
-func silenceLoop(ctx context.Context, health *observability.Registry, logger *slog.Logger) {
+func silenceLoop(ctx context.Context, health *observability.Registry,
+	sources *postgres.SourceRepo, logger *slog.Logger) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	wasSilent := map[string]bool{}
@@ -321,6 +322,22 @@ func silenceLoop(ctx context.Context, health *observability.Registry, logger *sl
 				}
 			}
 			wasSilent = silent
+
+			// The Sources page reads Postgres, and logproc is the only
+			// component that actually sees deliveries — sync the observed
+			// state so the page stops saying "awaiting" forever.
+			if sources != nil {
+				for _, src := range health.Sources() {
+					var last *time.Time
+					if !src.LastRecordAt.IsZero() {
+						at := src.LastRecordAt
+						last = &at
+					}
+					if err := sources.UpdateHealth(ctx, src.SourceID, string(src.State), last); err != nil {
+						logger.Warn("source health sync failed", "source", src.SourceID, "error", err)
+					}
+				}
+			}
 		}
 	}
 }
