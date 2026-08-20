@@ -223,6 +223,7 @@ func ingestServer(cfg *conf.Config, buffer *jetstream.Buffer,
 	// documentation transfers unchanged.
 	feedHandler := &feedauth.Handler{
 		Store: feedStore, Buffer: buffer, MaxBodyBytes: cfg.Ingest.MaxBodyBytes,
+		Logger: logger,
 		OnAccepted: func(f feedauth.Feed) {
 			health.RegisterSource(f.ID, f.Provider, 15*time.Minute)
 		},

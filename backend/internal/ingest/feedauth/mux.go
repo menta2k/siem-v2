@@ -1,8 +1,10 @@
 package feedauth
 
 import (
+	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/menta2k/siem-v2/backend/internal/ingest"
 	"github.com/menta2k/siem-v2/backend/internal/ingest/logpush"
@@ -23,9 +25,15 @@ type Handler struct {
 	// OnAccepted, when set, observes each authenticated delivery — the hook
 	// health registration attaches to.
 	OnAccepted func(feed Feed)
+	// Logger, when set, records REFUSED deliveries. A sender failing auth for
+	// hours must leave a trace (v1 lesson, relearned when a Logpush job pushed
+	// with a mangled credential and nothing anywhere said so) — rate-limited
+	// per feed id so a misconfigured high-volume sender cannot flood the log.
+	Logger *slog.Logger
 
-	mu        sync.Mutex
-	receivers map[string]http.Handler
+	mu             sync.Mutex
+	receivers      map[string]http.Handler
+	lastRefusalLog map[string]time.Time
 }
 
 // Mount registers the feed routes on a mux. PUT exists because Cloudflare
@@ -48,6 +56,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "credential store unavailable", http.StatusServiceUnavailable)
 		return
 	case Denied:
+		h.logRefused(provider, feedID, r)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -95,4 +104,26 @@ func (h *Handler) receiverFor(feed Feed) http.Handler {
 	}
 	h.receivers[feed.ID] = rec
 	return rec
+}
+
+// logRefused records an auth refusal at most once per feed per minute.
+func (h *Handler) logRefused(provider, feedID string, r *http.Request) {
+	if h.Logger == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.lastRefusalLog == nil {
+		h.lastRefusalLog = map[string]time.Time{}
+	}
+	now := time.Now()
+	last := h.lastRefusalLog[feedID]
+	if now.Sub(last) < time.Minute {
+		h.mu.Unlock()
+		return
+	}
+	h.lastRefusalLog[feedID] = now
+	h.mu.Unlock()
+	h.Logger.Warn("ingest delivery REFUSED: bad or missing credential",
+		"provider", provider, "feed_id", feedID,
+		"remote", r.RemoteAddr, "user_agent", r.Header.Get("User-Agent"))
 }
