@@ -243,6 +243,11 @@ func ingestServer(cfg *conf.Config, buffer *jetstream.Buffer,
 		Logger: logger,
 		OnAccepted: func(f feedauth.Feed) {
 			health.RegisterSource(f.ID, f.Provider, 15*time.Minute)
+			// Silence means "nothing is ARRIVING", judged at accept time.
+			// Feeding the clock from the consumer (which stamps batches with
+			// their original receive time) made a lagging consumer look like
+			// hours of silent sources during a backlog drain.
+			health.RecordDelivery(f.ID, 1, time.Now())
 		},
 	}
 	feedHandler.Mount(mux)
