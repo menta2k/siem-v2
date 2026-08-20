@@ -34,7 +34,14 @@ ingest:
   pull_interval: 60s
 
 correlate:
-  late_arrival_window: 60s
+  # Logpush delivers in BATCHES (up to minutes apart) while Vector feeds are
+  # near-real-time: the window must span that skew or Cloudflare records
+  # arrive after their flow already closed and NOTHING cross-provider ever
+  # joins. 60s (the dev value, tuned for fast local feedback) did exactly
+  # that in production. 5m covers Logpush's maximum upload interval plus
+  # processing headroom; the spec's assumption allows up to 15m if memory
+  # permits.
+  late_arrival_window: 5m
   heuristic_window: 5s
 
 evaluation:
