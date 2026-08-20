@@ -679,7 +679,14 @@ func (s *apiServer) listAudit(w http.ResponseWriter, r *http.Request) {
 // already see, so it adds no new disclosure — but it is still tenant-scoped by
 // the same path as everything else.
 func (s *apiServer) verdictStats(w http.ResponseWriter, r *http.Request) {
-	flows, err := s.repo.Search(r.Context(), tenantOf(r), victorialogs.FlowSearch{Limit: 1000})
+	// A bounded window ending NOW, not "newest 1000": an unbounded newest-first
+	// sample lets any future-stamped records (a mis-configured appliance clock)
+	// monopolize the entire dashboard, and "newest 1000" was never an honest
+	// statement of what the numbers cover anyway.
+	now := time.Now().UTC()
+	flows, err := s.repo.Search(r.Context(), tenantOf(r), victorialogs.FlowSearch{
+		From: now.Add(-24 * time.Hour), To: now, Limit: 1000,
+	})
 	if err != nil {
 		writeError(w, apierrors.Internal(err.Error()))
 		return
