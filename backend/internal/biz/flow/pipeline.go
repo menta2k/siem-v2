@@ -11,6 +11,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/correlate/keys"
 	"github.com/menta2k/siem-v2/backend/internal/correlate/window"
 	"github.com/menta2k/siem-v2/backend/internal/ingest"
+	"github.com/menta2k/siem-v2/backend/internal/ingest/filter"
 	"github.com/menta2k/siem-v2/backend/internal/normalize"
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
 )
@@ -50,6 +51,14 @@ type Pipeline struct {
 	OnFlow func(*Flow)
 	// OnParseFailure is called for each dead-lettered record.
 	OnParseFailure func(schema.Provider, error)
+
+	// Filters resolves a tenant's ingest filter rules (nil = keep everything).
+	// A matched record is dropped BEFORE anything is stored: no raw payload,
+	// no event, no flow — the one deliberate exception to Constitution II,
+	// and the reason resolution failures upstream fail OPEN.
+	Filters func(tenant string) *filter.Set
+	// OnFiltered observes drops for counting/logging.
+	OnFiltered func(tenant string, provider schema.Provider, count int)
 
 	// Loader, when set, lets a closing flow MERGE with one already stored
 	// under the same correlation key instead of duplicating it. This is what
@@ -111,32 +120,45 @@ func (p *Pipeline) ProcessBatch(ctx context.Context, batch ingest.RawBatch) erro
 		return fmt.Errorf("no parser registered for provider %q", batch.Provider)
 	}
 
-	// The unmodified originals are stored first — in ONE call for the whole
-	// batch — so they survive even if everything downstream fails
-	// (Constitution II). Per-record inserts capped throughput at the HTTP
-	// round-trip rate.
-	if p.Store != nil {
-		items := make([]RawItem, 0, len(batch.Records))
-		for _, raw := range batch.Records {
-			items = append(items, RawItem{
-				ID: fmt.Sprintf("%s:%s", batch.Provider, hashOf(raw)), Payload: raw,
-			})
-		}
-		_ = p.Store.StoreRaw(ctx, batch.Tenant, batch.Provider, items, batch.ReceivedAt)
+	var filters *filter.Set
+	if p.Filters != nil {
+		filters = p.Filters(batch.Tenant)
 	}
 
+	// Parse first, THEN store: the filter needs the normalized host/path, and
+	// a filtered record must never be stored anywhere. Kept records' originals
+	// still go in one bulk call (Constitution II for everything we ingest);
+	// parse failures keep their originals in the dead letter.
+	kept := make([]RawItem, 0, len(batch.Records))
+	events := make([]schema.Event, 0, len(batch.Records))
+	filtered := 0
 	for _, raw := range batch.Records {
 		event, err := parser.Parse(raw, batch.ReceivedAt)
 		if err != nil {
 			p.deadLetter(ctx, batch, raw, parser, err)
 			continue
 		}
-		event.Tenant = batch.Tenant
-		if p.Masker != nil {
-			p.Masker.Apply(event)
+		if filters.Drops(event.Request.Host, event.Request.Path) {
+			filtered++
+			continue
 		}
-		p.accumulate(*event, batch.ReceivedAt)
-
+		event.Tenant = batch.Tenant
+		kept = append(kept, RawItem{
+			ID: fmt.Sprintf("%s:%s", batch.Provider, hashOf(raw)), Payload: raw,
+		})
+		events = append(events, *event)
+	}
+	if filtered > 0 && p.OnFiltered != nil {
+		p.OnFiltered(batch.Tenant, batch.Provider, filtered)
+	}
+	if p.Store != nil && len(kept) > 0 {
+		_ = p.Store.StoreRaw(ctx, batch.Tenant, batch.Provider, kept, batch.ReceivedAt)
+	}
+	for i := range events {
+		if p.Masker != nil {
+			p.Masker.Apply(&events[i])
+		}
+		p.accumulate(events[i], batch.ReceivedAt)
 	}
 	return nil
 }

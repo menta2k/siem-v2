@@ -33,6 +33,7 @@ const navItems = computed(() => [
   { title: 'Rule testing', icon: 'mdi-shield-search', to: '/evaluate', visible: true },
   { title: 'Sources', icon: 'mdi-import', to: '/sources', visible: true },
   { title: 'Feeds', icon: 'mdi-transit-connection-variant', to: '/feeds', visible: role.value === 'admin' || role.value === 'engineer' },
+  { title: 'Ingest filters', icon: 'mdi-filter-remove-outline', to: '/filters', visible: role.value === 'admin' || role.value === 'engineer' },
   { title: 'Audit', icon: 'mdi-clipboard-text-clock', to: '/audit', visible: role.value === 'admin' },
   { title: 'Users', icon: 'mdi-account-multiple', to: '/users', visible: role.value === 'admin' },
 ])

@@ -60,6 +60,7 @@ type apiServer struct {
 	sources    *postgres.SourceRepo
 	authSvc    *service.AuthService
 	feeds      *service.FeedService
+	filters    *service.FilterService
 	asnNames   *asnowner.Resolver
 	vl         *victorialogs.Client
 	vlTenant   victorialogs.Tenant
@@ -153,6 +154,7 @@ func run(confPath string, logger *slog.Logger) error {
 	}
 	s.authSvc = authSvc
 	s.feeds = &service.FeedService{Repo: postgres.NewFeedRepo(pool), Sources: postgres.NewSourceRepo(pool)}
+	s.filters = &service.FilterService{Repo: postgres.NewFilterRepo(pool)}
 
 	if err := s.seedDev(ctx0()); err != nil {
 		return fmt.Errorf("seed: %w", err)
@@ -191,6 +193,7 @@ func (s *apiServer) routes() http.Handler {
 	audit := &auditAdapter{repo: s.audit, logger: s.logger}
 	s.authSvc.Audit = audit
 	s.feeds.Audit = audit
+	s.filters.Audit = audit
 	auth := &server.Authenticator{Resolve: s.resolvePrincipal, Audit: audit, Logger: s.logger}
 
 	// Authenticated routes. Each carries the permission it requires, so the
@@ -245,6 +248,10 @@ func (s *apiServer) routes() http.Handler {
 		server.RequirePermission(tenancy.PermManageSources, audit, s.feeds.Update))
 	api.HandleFunc("POST /api/v1/feeds/{feedID}/rotate",
 		server.RequirePermission(tenancy.PermManageSources, audit, s.feeds.Rotate))
+	api.HandleFunc("GET /api/v1/filters",
+		server.RequirePermission(tenancy.PermManageSources, audit, s.filters.Get))
+	api.HandleFunc("POST /api/v1/filters",
+		server.RequirePermission(tenancy.PermManageSources, audit, s.filters.Set))
 
 	// CORS wraps the authenticated API so a preflight is answered before
 	// authentication runs — a browser preflight carries no credentials by design.

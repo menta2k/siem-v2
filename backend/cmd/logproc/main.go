@@ -27,6 +27,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/data/victorialogs"
 	"github.com/menta2k/siem-v2/backend/internal/ingest"
 	"github.com/menta2k/siem-v2/backend/internal/ingest/feedauth"
+	"github.com/menta2k/siem-v2/backend/internal/ingest/filter"
 	"github.com/menta2k/siem-v2/backend/internal/ingest/logpush"
 	"github.com/menta2k/siem-v2/backend/internal/ingest/vectorhttp"
 	"github.com/menta2k/siem-v2/backend/internal/normalize"
@@ -88,7 +89,26 @@ func run(confPath string, logger *slog.Logger) error {
 	// Per-feed ingest credentials live in Postgres, served here from a
 	// refreshed in-memory snapshot. Postgres being down keeps ingest running
 	// on the last snapshot; only a store that has NEVER loaded answers 503.
-	feedStore, sourceRepo := buildFeedStore(ctx, cfg, health, logger)
+	feedStore, sourceRepo, filterRepo := buildFeedStore(ctx, cfg, health, logger)
+
+	// Tenant ingest filters, refreshed like the feed credentials. Every
+	// failure keeps the previous snapshot or yields "no filters" — dropping
+	// is irreversible, so this path fails OPEN by design.
+	filterCache := newFilterCache(filterRepo, logger)
+	go filterCache.run(ctx)
+	pipeline.Filters = filterCache.setFor
+	var filteredLogMu sync.Mutex
+	lastFilteredLog := map[string]time.Time{}
+	pipeline.OnFiltered = func(tenant string, provider schema.Provider, count int) {
+		filteredLogMu.Lock()
+		defer filteredLogMu.Unlock()
+		k := tenant + "/" + string(provider)
+		if time.Since(lastFilteredLog[k]) >= time.Minute {
+			lastFilteredLog[k] = time.Now()
+			logger.Info("records dropped by ingest filter (rate-limited: one line per tenant+provider per minute)",
+				"tenant", tenant, "provider", provider, "count", count)
+		}
+	}
 
 	srv := ingestServer(cfg, buffer, health, feedStore, logger)
 	go func() {
@@ -185,23 +205,23 @@ func (l feedLister) ListEnabled(ctx context.Context) ([]feedauth.Feed, error) {
 // DSN or unreachable database does not stop ingest — the legacy shared-secret
 // routes keep working and the feed routes answer 503 until the first load.
 func buildFeedStore(ctx context.Context, cfg *conf.Config,
-	health *observability.Registry, logger *slog.Logger) (*feedauth.Store, *postgres.SourceRepo) {
+	health *observability.Registry, logger *slog.Logger) (*feedauth.Store, *postgres.SourceRepo, *postgres.FilterRepo) {
 
 	dsn := os.Getenv("SIEM_PG_DSN")
 	if dsn == "" {
 		logger.Warn("SIEM_PG_DSN unset; per-feed ingest routes will answer 503")
-		return feedauth.NewStore(feedLister{}, 30*time.Second, logger), nil
+		return feedauth.NewStore(feedLister{}, 30*time.Second, logger), nil, nil
 	}
 	pool, err := postgres.Connect(ctx, dsn, int32(cfg.Storage.Postgres.MaxConns), cfg.Storage.Postgres.MinConns)
 	if err != nil {
 		// Ingest must outlive a database outage at startup: the legacy routes
 		// keep working and the feed routes answer 503 (senders retry).
 		logger.Warn("postgres unreachable; per-feed ingest routes will answer 503", "error", err)
-		return feedauth.NewStore(feedLister{}, 30*time.Second, logger), nil
+		return feedauth.NewStore(feedLister{}, 30*time.Second, logger), nil, nil
 	}
 	store := feedauth.NewStore(feedLister{repo: postgres.NewFeedRepo(pool)}, 30*time.Second, logger)
 	go store.Run(ctx)
-	return store, postgres.NewSourceRepo(pool)
+	return store, postgres.NewSourceRepo(pool), postgres.NewFilterRepo(pool)
 }
 
 func ingestServer(cfg *conf.Config, buffer *jetstream.Buffer,
@@ -366,4 +386,62 @@ func silenceLoop(ctx context.Context, health *observability.Registry,
 			}
 		}
 	}
+}
+
+// filterCache serves compiled per-tenant filter sets from a 30s-refresh
+// snapshot, failing open at every step.
+type filterCache struct {
+	repo   *postgres.FilterRepo
+	logger *slog.Logger
+	mu     sync.RWMutex
+	sets   map[string]*filter.Set
+}
+
+func newFilterCache(repo *postgres.FilterRepo, logger *slog.Logger) *filterCache {
+	return &filterCache{repo: repo, logger: logger, sets: map[string]*filter.Set{}}
+}
+
+func (c *filterCache) run(ctx context.Context) {
+	if c.repo == nil {
+		return
+	}
+	c.refresh(ctx)
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			c.refresh(ctx)
+		}
+	}
+}
+
+func (c *filterCache) refresh(ctx context.Context) {
+	all, err := c.repo.All(ctx)
+	if err != nil {
+		c.logger.Warn("ingest filter refresh failed; previous rules keep applying", "error", err)
+		return
+	}
+	next := make(map[string]*filter.Set, len(all))
+	for tenant, rules := range all {
+		set, err := filter.Compile(rules)
+		if err != nil {
+			// A rule set the API validated should never fail here, but if it
+			// does the tenant ingests everything rather than losing data.
+			c.logger.Warn("stored ingest filters do not compile; ignoring them", "tenant", tenant, "error", err)
+			continue
+		}
+		next[tenant] = set
+	}
+	c.mu.Lock()
+	c.sets = next
+	c.mu.Unlock()
+}
+
+func (c *filterCache) setFor(tenant string) *filter.Set {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sets[tenant] // nil = keep everything
 }

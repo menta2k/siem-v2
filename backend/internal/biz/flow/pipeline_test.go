@@ -7,6 +7,7 @@ import (
 
 	"github.com/menta2k/siem-v2/backend/internal/correlate/window"
 	"github.com/menta2k/siem-v2/backend/internal/ingest"
+	"github.com/menta2k/siem-v2/backend/internal/ingest/filter"
 	"github.com/menta2k/siem-v2/backend/internal/normalize/cloudflare"
 	"github.com/menta2k/siem-v2/backend/internal/normalize/nginx"
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
@@ -73,12 +74,61 @@ func TestLateProviderAmendsTheStoredFlow(t *testing.T) {
 }
 
 // mergeStore is Store + FlowLoader over a map, keyed by flow id.
-type mergeStore struct{ byID map[string]*Flow }
+type mergeStore struct {
+	byID map[string]*Flow
+	raw  []RawItem
+}
 
 func (c *mergeStore) Store(_ context.Context, f *Flow) error { c.byID[f.FlowID] = f; return nil }
-func (c *mergeStore) StoreRaw(context.Context, string, schema.Provider, []RawItem, time.Time) error {
+func (c *mergeStore) StoreRaw(_ context.Context, _ string, _ schema.Provider, items []RawItem, _ time.Time) error {
+	c.raw = append(c.raw, items...)
 	return nil
 }
 func (c *mergeStore) Get(_ context.Context, _, flowID string) (*Flow, error) {
 	return c.byID[flowID], nil
+}
+
+// TestFilteredRecordsAreNeverStoredAnywhere: a rule-matched record leaves no
+// trace — no raw payload, no event, no flow. That irreversibility is the
+// feature's contract and the reason everything around it fails open.
+func TestFilteredRecordsAreNeverStoredAnywhere(t *testing.T) {
+	store := &mergeStore{byID: map[string]*Flow{}}
+	w := window.New(window.Options{LateArrival: 5 * time.Millisecond, ExpectedLayers: 1})
+	p := NewPipeline(store, &ingest.MemoryDeadLetter{}, w)
+	p.ExpectedLayers = []schema.Layer{schema.LayerOrigin}
+	p.Register(nginx.New())
+
+	set, err := filter.Compile([]filter.Rule{
+		{Field: "request_path", Op: "prefix", Values: []string{"/nginx_status"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Filters = func(string) *filter.Set { return set }
+
+	line := func(path string) []byte {
+		return []byte(`{"time_iso8601":"2026-08-20T09:00:00+03:00","cf_ray":"cafe000000000001-SOF","request_uri":"` + path + `","request_method":"GET","status":200,"host":"w.example.com","remote_addr":"1.2.3.4"}`)
+	}
+	if err := p.ProcessBatch(t.Context(), ingest.RawBatch{
+		Provider: schema.ProviderNginx, Tenant: "acme", SourceID: "n1",
+		Records: [][]byte{line("/nginx_status"), line("/kept")},
+	}); err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(store.raw) != 1 {
+		t.Fatalf("only the KEPT record's original may be stored, got %d raw items", len(store.raw))
+	}
+	p.Correlate()
+	time.Sleep(10 * time.Millisecond)
+	if _, err := p.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.byID) != 1 {
+		t.Fatalf("exactly the kept record's flow must exist, got %d", len(store.byID))
+	}
+	for _, f := range store.byID {
+		if f.Request.Path != "/kept" {
+			t.Fatalf("the filtered path leaked into a flow: %q", f.Request.Path)
+		}
+	}
 }
