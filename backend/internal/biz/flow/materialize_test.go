@@ -441,3 +441,33 @@ func TestCompletenessRelativeToTermination(t *testing.T) {
 		t.Fatalf("an allowed edge-only flow is missing the origin; want partial, got %q", f2.Completeness)
 	}
 }
+
+// TestCacheHitEdgeFlowIsComplete: an allowed request Cloudflare served from
+// cache never reaches the origin, so an edge-only flow with a cache hit is
+// complete — the origin's absence is expected, not a gap.
+func TestCacheHitEdgeFlowIsComplete(t *testing.T) {
+	at := time.Now().UTC()
+	hit := schema.Event{
+		EventID: "cf1", Provider: schema.ProviderCloudflare, Layer: schema.LayerEdge,
+		EventTime: at, Verdict: schema.Verdict{Action: "allowed", Mapped: true},
+		Request:  schema.Request{Host: "x", Path: "/a.js"},
+		Response: schema.Response{Status: 200, CacheStatus: "hit"},
+	}
+	f := Materialize("ray:c1", []schema.Event{hit}, Options{
+		Tenant: "acme", Method: keys.TierExact, Closed: true, Now: at,
+	})
+	if f.Completeness != Complete {
+		t.Fatalf("a cache-hit edge flow is complete; got %q missing=%v", f.Completeness, f.LayersMissing)
+	}
+
+	// An allowed edge flow with a cache MISS did go to origin, which is absent:
+	// genuinely partial.
+	miss := hit
+	miss.Response.CacheStatus = "miss"
+	f2 := Materialize("ray:c2", []schema.Event{miss}, Options{
+		Tenant: "acme", Method: keys.TierExact, Closed: true, Now: at,
+	})
+	if f2.Completeness != Partial {
+		t.Fatalf("a cache-miss edge-only flow is missing the origin; want partial, got %q", f2.Completeness)
+	}
+}

@@ -2,6 +2,7 @@ package flow
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/menta2k/siem-v2/backend/internal/correlate"
@@ -69,7 +70,14 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 	if len(expected) == 0 {
 		expected = expectedLayers
 	}
-	expected = expectedUpTo(expected, f.TerminatingLayer)
+	// The completeness boundary is the terminating layer; failing that, the edge
+	// if Cloudflare served the response from cache (the origin was never
+	// contacted, so its absence is not a gap).
+	boundary := f.TerminatingLayer
+	if boundary == "" && edgeServedFromCache(ordered) {
+		boundary = schema.LayerEdge
+	}
+	expected = expectedUpTo(expected, boundary)
 	f.LayersPresent, f.LayersMissing = layerCoverage(ordered, expected)
 	f.TimingAttribution = timingAttribution(ordered)
 	f.Client, f.Request = denormalize(ordered)
@@ -86,6 +94,22 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 }
 
 // layerCoverage reports which expected layers reported and which did not.
+// cacheServedStatuses are the Cloudflare CacheCacheStatus values that mean the
+// edge answered from cache without going to the origin.
+var cacheServedStatuses = map[string]bool{
+	"hit": true, "revalidated": true, "updating": true, "stale": true,
+}
+
+// edgeServedFromCache reports whether the edge event shows a cache hit.
+func edgeServedFromCache(events []schema.Event) bool {
+	for _, e := range events {
+		if e.Layer == schema.LayerEdge && cacheServedStatuses[strings.ToLower(e.Response.CacheStatus)] {
+			return true
+		}
+	}
+	return false
+}
+
 // expectedUpTo trims the expected layer set to those at or above the
 // terminating layer in causal order. An empty terminating layer (the request
 // passed through without any layer terminating it) expects the full set.

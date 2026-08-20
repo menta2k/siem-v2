@@ -51,6 +51,7 @@ type record struct {
 	ClientCountry          string `json:"ClientCountry"`
 	ClientASN              int    `json:"ClientASN"`
 	EdgeResponseStatus     int    `json:"EdgeResponseStatus"`
+	CacheCacheStatus       string `json:"CacheCacheStatus"`
 	BotScore               *int   `json:"BotScore"`
 
 	// Current security fields.
@@ -151,7 +152,7 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 			Method: r.ClientRequestMethod, Host: r.ClientRequestHost,
 			Path: path, Query: query, Headers: r.RequestHeaders,
 		},
-		Response: schema.Response{Status: r.EdgeResponseStatus},
+		Response: schema.Response{Status: r.EdgeResponseStatus, CacheStatus: r.CacheCacheStatus},
 	}
 	if order, ok := e.Layer.Order(); ok {
 		e.LayerOrderHint = order

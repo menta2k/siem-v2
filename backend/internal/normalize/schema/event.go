@@ -186,6 +186,10 @@ type Response struct {
 	Status     int     `json:"status,omitempty"`
 	Bytes      int64   `json:"bytes,omitempty"`
 	DurationMS float64 `json:"duration_ms,omitempty"`
+	// CacheStatus is Cloudflare's CacheCacheStatus. A cache hit means the edge
+	// served the response without contacting the origin — so the origin's
+	// absence from the flow is expected, not a gap.
+	CacheStatus string `json:"cache_status,omitempty"`
 }
 
 // Verdict is one layer's decision, with the provider's own reason preserved
