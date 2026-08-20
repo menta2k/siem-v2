@@ -7,12 +7,9 @@ import (
 	"bufio"
 	"context"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/menta2k/siem-v2/backend/internal/biz/flow"
 )
 
 // topN bounds both panels. Ten rows is what a human reads; past that the
@@ -37,97 +34,35 @@ type asnCount struct {
 	Blocked int    `json:"blocked"`
 }
 
-// topPanels aggregates the flow set the dashboard already reads — the same
-// data the caller may search, so it adds no new disclosure.
-func (s *apiServer) topPanels(ctx context.Context, flows []*flow.Flow) (sources []sourceCount, networks []asnCount) {
-	type ipAgg struct {
-		country string
-		asn     int
-		events  int
-		blocked int
+// topPanels builds the Top sources and Top networks panels from direct stats
+// queries over the window (not a flow sample), then decorates ASNs with owner
+// names in one batched lookup.
+func (s *apiServer) topPanels(ctx context.Context, tenant string, from, to time.Time) (sources []sourceCount, networks []asnCount) {
+	srcRows, err := s.repo.TopSources(ctx, tenant, from, to, topN)
+	if err != nil {
+		srcRows = nil
 	}
-	type asnAgg struct {
-		countries map[string]int
-		clients   map[string]bool
-		events    int
-		blocked   int
-	}
-	byIP := map[string]*ipAgg{}
-	byASN := map[int]*asnAgg{}
-
-	for _, f := range flows {
-		blocked := f.EffectiveOutcome == "blocked"
-		ip := f.Client.IP
-		if ip != "" {
-			a := byIP[ip]
-			if a == nil {
-				a = &ipAgg{country: f.Client.Country, asn: f.Client.ASN}
-				byIP[ip] = a
-			}
-			a.events++
-			if blocked {
-				a.blocked++
-			}
-		}
-		// The ASN panel only counts flows where a vendor actually reported one.
-		if f.Client.ASN > 0 {
-			a := byASN[f.Client.ASN]
-			if a == nil {
-				a = &asnAgg{countries: map[string]int{}, clients: map[string]bool{}}
-				byASN[f.Client.ASN] = a
-			}
-			a.events++
-			if blocked {
-				a.blocked++
-			}
-			if ip != "" {
-				a.clients[ip] = true
-			}
-			if f.Client.Country != "" {
-				a.countries[f.Client.Country]++
-			}
-		}
+	netRows, err := s.repo.TopNetworks(ctx, tenant, from, to, topN)
+	if err != nil {
+		netRows = nil
 	}
 
-	for ip, a := range byIP {
+	sources = make([]sourceCount, 0, len(srcRows))
+	for _, r := range srcRows {
 		sources = append(sources, sourceCount{
-			ClientIP: ip, Country: a.country, ASN: a.asn,
-			Events: a.events, Blocked: a.blocked,
+			ClientIP: r.ClientIP, Country: r.Country, ASN: r.ASN,
+			Events: r.Events, Blocked: r.Blocked,
 		})
 	}
-	sort.Slice(sources, func(i, j int) bool {
-		if sources[i].Events != sources[j].Events {
-			return sources[i].Events > sources[j].Events
-		}
-		return sources[i].ClientIP < sources[j].ClientIP
-	})
-	if len(sources) > topN {
-		sources = sources[:topN]
-	}
-
-	for asn, a := range byASN {
-		top, topCount := "", 0
-		for c, n := range a.countries {
-			if n > topCount || (n == topCount && c < top) {
-				top, topCount = c, n
-			}
-		}
+	networks = make([]asnCount, 0, len(netRows))
+	for _, r := range netRows {
 		networks = append(networks, asnCount{
-			ASN: asn, Country: top, Clients: len(a.clients),
-			Events: a.events, Blocked: a.blocked,
+			ASN: r.ASN, Country: r.Country, Clients: r.Clients,
+			Events: r.Events, Blocked: r.Blocked,
 		})
 	}
-	sort.Slice(networks, func(i, j int) bool {
-		if networks[i].Events != networks[j].Events {
-			return networks[i].Events > networks[j].Events
-		}
-		return networks[i].ASN < networks[j].ASN
-	})
-	if len(networks) > topN {
-		networks = networks[:topN]
-	}
 
-	// One batched owner lookup decorates BOTH panels (v1's nameNetworks).
+	// One batched owner lookup decorates BOTH panels.
 	if s.asnNames != nil {
 		asns := make([]int, 0, len(sources)+len(networks))
 		for _, src := range sources {
@@ -143,12 +78,6 @@ func (s *apiServer) topPanels(ctx context.Context, flows []*flow.Flow) (sources 
 		for i := range networks {
 			networks[i].Owner = names[networks[i].ASN]
 		}
-	}
-	if sources == nil {
-		sources = []sourceCount{}
-	}
-	if networks == nil {
-		networks = []asnCount{}
 	}
 	return sources, networks
 }

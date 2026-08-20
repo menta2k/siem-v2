@@ -686,56 +686,40 @@ func (s *apiServer) listAudit(w http.ResponseWriter, r *http.Request) {
 // already see, so it adds no new disclosure — but it is still tenant-scoped by
 // the same path as everything else.
 func (s *apiServer) verdictStats(w http.ResponseWriter, r *http.Request) {
-	// A bounded window ending NOW, not "newest 1000": an unbounded newest-first
-	// sample lets any future-stamped records (a mis-configured appliance clock)
-	// monopolize the entire dashboard, and "newest 1000" was never an honest
-	// statement of what the numbers cover anyway.
+	// Range is selectable because "newest 1000 flows" was under a minute of
+	// data at production volume. Every panel below aggregates over EVERY flow
+	// in the window via direct stats queries, not a sample.
 	now := time.Now().UTC()
-	flows, err := s.repo.Search(r.Context(), tenantOf(r), victorialogs.FlowSearch{
-		From: now.Add(-24 * time.Hour), To: now, Limit: 1000,
-	})
+	from := now.Add(-dashboardRange(r.URL.Query().Get("range")))
+	tenant := tenantOf(r)
+	ctx := r.Context()
+
+	total, err := s.repo.FlowFilterCount(ctx, tenant, "", from, now)
 	if err != nil {
 		writeError(w, apierrors.Internal(err.Error()))
 		return
 	}
-
-	byOutcome := map[string]int{}
-	byLayer := map[string]int{}
-	byCompleteness := map[string]int{}
-	bridged, heuristic := 0, 0
-
-	for _, f := range flows {
-		byOutcome[string(f.EffectiveOutcome)]++
-		byCompleteness[string(f.Completeness)]++
-		if f.TerminatingLayer != "" {
-			byLayer[string(f.TerminatingLayer)]++
-		}
-		if f.Bridged {
-			bridged++
-		}
-		if string(f.Method) == "heuristic" {
-			heuristic++
-		}
-	}
-
-	// Records per provider is the TRUE event count over the window, not a
-	// derived count from the flow sample above — a 1000-flow slice of millions
-	// badly under-represented Cloudflare, which is present in nearly every
-	// request. A query error here degrades this one panel, not the dashboard.
-	byProvider, err := s.repo.ProviderEventCounts(r.Context(), tenantOf(r), now.Add(-24*time.Hour), now)
+	byOutcome, _ := s.repo.FlowFieldCounts(ctx, tenant, "effective_outcome", from, now)
+	byCompleteness, _ := s.repo.FlowFieldCounts(ctx, tenant, "completeness", from, now)
+	byLayer, _ := s.repo.FlowFieldCounts(ctx, tenant, "terminating_layer", from, now)
+	delete(byLayer, "") // an empty terminating layer means "not terminated", not a layer
+	bridged, _ := s.repo.FlowFilterCount(ctx, tenant, "bridged:=true", from, now)
+	heuristic, _ := s.repo.FlowFilterCount(ctx, tenant, "correlation_method:=heuristic", from, now)
+	byProvider, err := s.repo.ProviderEventCounts(ctx, tenant, from, now)
 	if err != nil {
 		byProvider = map[string]int{}
 	}
 
 	exactRatio := 1.0
-	if len(flows) > 0 {
-		exactRatio = float64(len(flows)-heuristic) / float64(len(flows))
+	if total > 0 {
+		exactRatio = float64(total-heuristic) / float64(total)
 	}
 
-	topSources, topNetworks := s.topPanels(r.Context(), flows)
+	topSources, topNetworks := s.topPanels(ctx, tenant, from, now)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total_flows":          len(flows),
+		"total_flows":          total,
+		"range":                r.URL.Query().Get("range"),
 		"top_sources":          topSources,
 		"top_networks":         topNetworks,
 		"by_outcome":           byOutcome,
@@ -743,10 +727,23 @@ func (s *apiServer) verdictStats(w http.ResponseWriter, r *http.Request) {
 		"by_completeness":      byCompleteness,
 		"by_provider":          byProvider,
 		"bridged_flows":        bridged,
-		// The exact-join ratio is the number FR-072e exists for: a falling ratio
-		// means identifier propagation broke while flows still appear to form.
-		"exact_join_ratio": exactRatio,
+		"exact_join_ratio":     exactRatio,
 	})
+}
+
+// dashboardRange maps a preset to a duration; anything unknown is one hour, a
+// sane default that is more than a sample yet cheap to aggregate.
+func dashboardRange(preset string) time.Duration {
+	switch preset {
+	case "15m":
+		return 15 * time.Minute
+	case "24h":
+		return 24 * time.Hour
+	case "1h", "":
+		return time.Hour
+	default:
+		return time.Hour
+	}
 }
 
 func (s *apiServer) healthz(w http.ResponseWriter, r *http.Request) {

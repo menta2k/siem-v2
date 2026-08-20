@@ -5,6 +5,12 @@ const { can } = useAuth()
 const config = useRuntimeConfig()
 
 const stats = ref<any>(null)
+const range = ref('1h')
+const RANGES = [
+  { title: 'Last 15 minutes', value: '15m' },
+  { title: 'Last hour', value: '1h' },
+  { title: 'Last 24 hours', value: '24h' },
+]
 const storage = ref<any>(null)
 const loading = ref(false)
 const error = ref('')
@@ -13,7 +19,7 @@ async function load() {
   loading.value = true; error.value = ''
   try {
     stats.value = await $fetch(`${config.public.apiBase}/stats/verdicts`, {
-      headers: headers(),
+      headers: headers(), query: { range: range.value },
     })
   } catch (e) {
     error.value = toDisplayMessage(e, 'Statistics could not be loaded.')
@@ -23,6 +29,7 @@ async function load() {
 }
 onMounted(load)
 watch(identity, load)
+watch(range, load)
 
 // Storage is fetched separately and its errors are swallowed (v1 behaviour):
 // the panel says "unavailable" rather than degrading the whole dashboard.
@@ -78,6 +85,13 @@ function pct(part: number, total: number) {
 
 <template>
   <div>
+    <div class="d-flex align-center mb-3">
+      <v-spacer />
+      <v-select
+        v-model="range" :items="RANGES" density="compact" variant="outlined"
+        hide-details style="max-width: 220px" label="Time range" data-test="stats-range"
+      />
+    </div>
     <CollectionHealthBanner />
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <v-progress-linear v-if="loading" indeterminate class="mb-3" />

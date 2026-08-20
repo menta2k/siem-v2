@@ -68,6 +68,133 @@ func (r *FlowRepo) StoreRaw(ctx context.Context, tenant string, provider schema.
 	return r.client.Insert(ctx, r.tenant, docs)
 }
 
+// FlowFieldCounts groups closed flows by one field over a window and counts
+// them — the honest way to build a distribution panel, over EVERY flow in the
+// window rather than a 1000-flow sample that spans seconds at real volume.
+// field is a fixed column name chosen by the caller, never user input.
+func (r *FlowRepo) FlowFieldCounts(ctx context.Context, tenant, field string, from, to time.Time) (map[string]int, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return nil, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[%s, %s] | stats by (%s) count() n`,
+		quote(tenant), quote(string(KindFlow)),
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), field)
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int{}
+	for _, row := range rows {
+		key, _ := row[field].(string)
+		out[key] = atoiField(row["n"])
+	}
+	return out, nil
+}
+
+// FlowFilterCount counts flows in the window matching an extra, CALLER-supplied
+// (never user) filter clause. An empty clause counts all flows.
+func (r *FlowRepo) FlowFilterCount(ctx context.Context, tenant, clause string, from, to time.Time) (int, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return 0, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	extra := ""
+	if clause != "" {
+		extra = " " + clause
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[%s, %s]%s | stats count() n`,
+		quote(tenant), quote(string(KindFlow)),
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), extra)
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	return atoiField(rows[0]["n"]), nil
+}
+
+// SourceStat and NetworkStat are the top-panel rows aggregated over the whole
+// window (not a flow sample).
+type SourceStat struct {
+	ClientIP string
+	Country  string
+	ASN      int
+	Events   int
+	Blocked  int
+}
+
+type NetworkStat struct {
+	ASN     int
+	Country string
+	Clients int
+	Events  int
+	Blocked int
+}
+
+// TopSources aggregates the busiest client IPs over the window.
+func (r *FlowRepo) TopSources(ctx context.Context, tenant string, from, to time.Time, limit int) ([]SourceStat, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return nil, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[%s, %s] client_ip:* `+
+		`| stats by (client_ip) count() events, count() if (effective_outcome:=blocked) blocked, `+
+		`max(country) country, max(asn) asn | sort by (events desc) | limit %d`,
+		quote(tenant), quote(string(KindFlow)),
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SourceStat, 0, len(rows))
+	for _, row := range rows {
+		ip, _ := row["client_ip"].(string)
+		if ip == "" {
+			continue
+		}
+		country, _ := row["country"].(string)
+		out = append(out, SourceStat{
+			ClientIP: ip, Country: country, ASN: atoiField(row["asn"]),
+			Events: atoiField(row["events"]), Blocked: atoiField(row["blocked"]),
+		})
+	}
+	return out, nil
+}
+
+// TopNetworks aggregates the busiest origin ASNs over the window.
+func (r *FlowRepo) TopNetworks(ctx context.Context, tenant string, from, to time.Time, limit int) ([]NetworkStat, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return nil, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[%s, %s] asn:>0 `+
+		`| stats by (asn) count() events, count() if (effective_outcome:=blocked) blocked, `+
+		`count_uniq(client_ip) clients, max(country) country | sort by (events desc) | limit %d`,
+		quote(tenant), quote(string(KindFlow)),
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NetworkStat, 0, len(rows))
+	for _, row := range rows {
+		asn := atoiField(row["asn"])
+		if asn <= 0 {
+			continue
+		}
+		country, _ := row["country"].(string)
+		out = append(out, NetworkStat{
+			ASN: asn, Country: country, Clients: atoiField(row["clients"]),
+			Events: atoiField(row["events"]), Blocked: atoiField(row["blocked"]),
+		})
+	}
+	return out, nil
+}
+
+func atoiField(v any) int {
+	n, _ := strconv.Atoi(fmt.Sprint(v))
+	return n
+}
+
 // ProviderEventCounts returns the TRUE per-provider event count over a window
 // via a direct stats query — not a flow sample. The dashboard's old
 // sample-and-count under-represented whichever provider is spread thinly
