@@ -14,21 +14,26 @@ import (
 // unknown decision to the nearest familiar one gives the analyst a confident
 // wrong answer (FR-014).
 var actionMap = map[string]schema.Action{
-	"allow":                  schema.ActionAllowed,
-	"skip":                   schema.ActionAllowed,
-	"log":                    schema.ActionLogged,
-	"block":                  schema.ActionBlocked,
-	"drop":                   schema.ActionBlocked,
-	"challenge":              schema.ActionChallenged,
-	"managed_challenge":      schema.ActionChallenged,
-	"managedchallenge":       schema.ActionChallenged,
-	"jschallenge":            schema.ActionChallenged,
-	"js_challenge":           schema.ActionChallenged,
-	"connection_close":       schema.ActionBlocked,
-	"connectionclose":        schema.ActionBlocked,
-	"force_connection_close": schema.ActionBlocked,
-	"forceconnectionclose":   schema.ActionBlocked,
-	"rate_limit":             schema.ActionRateLimited,
+	"allow":             schema.ActionAllowed,
+	"skip":              schema.ActionAllowed,
+	"log":               schema.ActionLogged,
+	"block":             schema.ActionBlocked,
+	"drop":              schema.ActionBlocked,
+	"challenge":         schema.ActionChallenged,
+	"managed_challenge": schema.ActionChallenged,
+	"managedchallenge":  schema.ActionChallenged,
+	// The managedChallenge* family: a challenge that was solved is a pass; one
+	// that was bypassed (an exception let the request through) is an allow.
+	"managedchallengenoninteractivesolved": schema.ActionChallengePassed,
+	"managedchallengeinteractivesolved":    schema.ActionChallengePassed,
+	"managedchallengebypassed":             schema.ActionAllowed,
+	"jschallenge":                          schema.ActionChallenged,
+	"js_challenge":                         schema.ActionChallenged,
+	"connection_close":                     schema.ActionBlocked,
+	"connectionclose":                      schema.ActionBlocked,
+	"force_connection_close":               schema.ActionBlocked,
+	"forceconnectionclose":                 schema.ActionBlocked,
+	"rate_limit":                           schema.ActionRateLimited,
 }
 
 // Cloudflare's current ruleset writes SecurityAction in camelCase

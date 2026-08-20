@@ -207,6 +207,9 @@ func TestCamelCaseSecurityActionsMap(t *testing.T) {
 		{"jsChallenge", schema.ActionChallenged},
 		{"connectionClose", schema.ActionBlocked},
 		{"forceConnectionClose", schema.ActionBlocked},
+		{"managedChallengeNonInteractiveSolved", schema.ActionChallengePassed},
+		{"managedChallengeInteractiveSolved", schema.ActionChallengePassed},
+		{"managedChallengeBypassed", schema.ActionAllowed},
 	}
 	for _, c := range cases {
 		line := []byte(`{"RayID":"a2e1279f0d9a52f4","ParentRayID":"00",` +
