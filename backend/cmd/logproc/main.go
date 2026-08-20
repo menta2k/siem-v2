@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -79,7 +80,7 @@ func run(confPath string, logger *slog.Logger) error {
 	logger.Info("connected to victorialogs", "url", cfg.Storage.VictoriaLogs.Hot)
 
 	health := observability.NewRegistry()
-	pipeline := buildPipeline(vl, tenant, cfg, health)
+	pipeline := buildPipeline(vl, tenant, cfg, health, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -116,7 +117,7 @@ func run(confPath string, logger *slog.Logger) error {
 }
 
 func buildPipeline(vl *victorialogs.Client, tenant victorialogs.Tenant,
-	cfg *conf.Config, health *observability.Registry) *flow.Pipeline {
+	cfg *conf.Config, health *observability.Registry, logger *slog.Logger) *flow.Pipeline {
 
 	repo := victorialogs.NewFlowRepo(vl, tenant)
 	w := window.New(window.Options{
@@ -134,8 +135,24 @@ func buildPipeline(vl *victorialogs.Client, tenant victorialogs.Tenant,
 	p.Register(f5asm.New())
 	p.Register(nginx.New())
 
+	// Rate-limited to one line per provider per minute: 274,000 records once
+	// failed to parse without a single log line, because the failure path only
+	// bumped a rate nothing rendered. The ERROR carries the parser's own
+	// reason, which names the missing field or bad layout directly.
+	var parseLogMu sync.Mutex
+	lastParseLog := map[schema.Provider]time.Time{}
 	p.OnParseFailure = func(provider schema.Provider, err error) {
 		health.RecordParseFailureRate(string(provider), 1)
+		parseLogMu.Lock()
+		now := time.Now()
+		if now.Sub(lastParseLog[provider]) >= time.Minute {
+			lastParseLog[provider] = now
+			parseLogMu.Unlock()
+			logger.Error("records failing to parse (rate-limited: one line per provider per minute)",
+				"provider", provider, "reason", err.Error())
+			return
+		}
+		parseLogMu.Unlock()
 	}
 	return p
 }
