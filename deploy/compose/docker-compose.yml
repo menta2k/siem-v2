@@ -3,6 +3,7 @@ name: siem-v2
 services:
   victorialogs-hot:
     image: victoriametrics/victoria-logs:latest
+    restart: unless-stopped
     command:
       - -storageDataPath=/vlogs
       - -retentionPeriod=30d
@@ -13,6 +14,7 @@ services:
 
   victorialogs-warm:
     image: victoriametrics/victoria-logs:latest
+    restart: unless-stopped
     command:
       - -storageDataPath=/vlogs
       - -retentionPeriod=90d
@@ -23,6 +25,7 @@ services:
 
   victorialogs-raw:
     image: victoriametrics/victoria-logs:latest
+    restart: unless-stopped
     command:
       - -storageDataPath=/vlogs
       # Raw provider evidence carries its own, shorter retention. The instance
@@ -37,6 +40,7 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     # Credentials come from .env (see .env.example); the defaults keep a bare
     # `docker compose up` working for local development and are obviously
     # dev-only values, never production ones.
@@ -52,6 +56,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
+    restart: unless-stopped
     # appendonly: correlation state must survive restart (FR-023)
     command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports: ["56379:6379"]   # host port shifted: 6379 is taken by another local stack
@@ -59,12 +64,14 @@ services:
 
   nats:
     image: nats:2-alpine
+    restart: unless-stopped
     command: ["-js", "-sd", "/data"]
     ports: ["4222:4222", "8222:8222"]
     volumes: ["nats:/data"]
 
   rustfs:
     image: rustfs/rustfs:latest
+    restart: unless-stopped
     environment:
       RUSTFS_ACCESS_KEY: ${SIEM_S3_ACCESS_KEY:-siem_dev}
       RUSTFS_SECRET_KEY: ${SIEM_S3_SECRET_KEY:-siem_dev_only}
@@ -75,6 +82,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.wirefilter
+    restart: unless-stopped
     ports: ["8081:8081"]
 
   # ---------------------------------------------------------------- app services
