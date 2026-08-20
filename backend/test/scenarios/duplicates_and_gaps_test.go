@@ -25,7 +25,7 @@ func (m *memStore) Store(_ context.Context, f *flow.Flow) error {
 	m.flows = append(m.flows, f)
 	return nil
 }
-func (m *memStore) StoreRaw(context.Context, string, schema.Provider, string, []byte, time.Time) error {
+func (m *memStore) StoreRaw(context.Context, string, schema.Provider, []flow.RawItem, time.Time) error {
 	m.raws++
 	return nil
 }

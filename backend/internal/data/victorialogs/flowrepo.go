@@ -37,16 +37,20 @@ func (r *FlowRepo) Store(ctx context.Context, f *flow.Flow) error {
 // StoreRaw writes the unmodified provider record alongside its normalized form,
 // which Constitution Principle II requires for the full retention period.
 func (r *FlowRepo) StoreRaw(ctx context.Context, tenant string, provider schema.Provider,
-	rawID string, payload []byte, receivedAt time.Time) error {
-	return r.client.Insert(ctx, r.tenant, []Document{{
-		Time: receivedAt,
-		Msg:  string(payload),
-		Fields: map[string]any{
-			"tenant": tenant, "provider": string(provider),
-			"dataset": "raw", "record_kind": string(KindRaw),
-			"raw_id": rawID, "received_at": receivedAt.UTC().Format(time.RFC3339Nano),
-		},
-	}})
+	items []flow.RawItem, receivedAt time.Time) error {
+	docs := make([]Document, 0, len(items))
+	for _, it := range items {
+		docs = append(docs, Document{
+			Time: receivedAt,
+			Msg:  string(it.Payload),
+			Fields: map[string]any{
+				"tenant": tenant, "provider": string(provider),
+				"dataset": "raw", "record_kind": string(KindRaw),
+				"raw_id": it.ID, "received_at": receivedAt.UTC().Format(time.RFC3339Nano),
+			},
+		})
+	}
+	return r.client.Insert(ctx, r.tenant, docs)
 }
 
 // Get fetches one flow by id, scoped to the tenant.

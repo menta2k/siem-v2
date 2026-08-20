@@ -237,7 +237,7 @@ func (c *captureStore) Store(_ context.Context, f *Flow) error {
 	c.flows = append(c.flows, f)
 	return nil
 }
-func (c *captureStore) StoreRaw(context.Context, string, schema.Provider, string, []byte, time.Time) error {
+func (c *captureStore) StoreRaw(context.Context, string, schema.Provider, []RawItem, time.Time) error {
 	return nil
 }
 

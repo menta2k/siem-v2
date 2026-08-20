@@ -18,8 +18,11 @@ import (
 // Store persists completed flows.
 type Store interface {
 	Store(ctx context.Context, f *Flow) error
+	// StoreRaw persists the unmodified originals of ONE batch in one call.
+	// One insert per record capped the whole pipeline at the HTTP round-trip
+	// rate (~370 records/s observed) while CPU sat idle.
 	StoreRaw(ctx context.Context, tenant string, provider schema.Provider,
-		rawID string, payload []byte, receivedAt time.Time) error
+		items []RawItem, receivedAt time.Time) error
 }
 
 // Pipeline turns buffered raw batches into stored flows.
@@ -106,14 +109,21 @@ func (p *Pipeline) ProcessBatch(ctx context.Context, batch ingest.RawBatch) erro
 		return fmt.Errorf("no parser registered for provider %q", batch.Provider)
 	}
 
-	for _, raw := range batch.Records {
-		// The unmodified original is stored first, so it survives even if
-		// everything downstream fails (Constitution II).
-		rawID := fmt.Sprintf("%s:%s", batch.Provider, hashOf(raw))
-		if p.Store != nil {
-			_ = p.Store.StoreRaw(ctx, batch.Tenant, batch.Provider, rawID, raw, batch.ReceivedAt)
+	// The unmodified originals are stored first — in ONE call for the whole
+	// batch — so they survive even if everything downstream fails
+	// (Constitution II). Per-record inserts capped throughput at the HTTP
+	// round-trip rate.
+	if p.Store != nil {
+		items := make([]RawItem, 0, len(batch.Records))
+		for _, raw := range batch.Records {
+			items = append(items, RawItem{
+				ID: fmt.Sprintf("%s:%s", batch.Provider, hashOf(raw)), Payload: raw,
+			})
 		}
+		_ = p.Store.StoreRaw(ctx, batch.Tenant, batch.Provider, items, batch.ReceivedAt)
+	}
 
+	for _, raw := range batch.Records {
 		event, err := parser.Parse(raw, batch.ReceivedAt)
 		if err != nil {
 			p.deadLetter(ctx, batch, raw, parser, err)
@@ -280,6 +290,12 @@ func hashOf(b []byte) string {
 
 // InFlight reports how many flows are open, a bounded-memory signal.
 func (p *Pipeline) InFlight() int { return p.Window.InFlight() }
+
+// RawItem is one original record queued for raw storage.
+type RawItem struct {
+	ID      string
+	Payload []byte
+}
 
 // mergeHorizon bounds how long a stored flow stays mergeable. Beyond it a
 // straggler opens a duplicate flow — the pre-merge behavior — rather than

@@ -76,7 +76,7 @@ func TestLateProviderAmendsTheStoredFlow(t *testing.T) {
 type mergeStore struct{ byID map[string]*Flow }
 
 func (c *mergeStore) Store(_ context.Context, f *Flow) error { c.byID[f.FlowID] = f; return nil }
-func (c *mergeStore) StoreRaw(context.Context, string, schema.Provider, string, []byte, time.Time) error {
+func (c *mergeStore) StoreRaw(context.Context, string, schema.Provider, []RawItem, time.Time) error {
 	return nil
 }
 func (c *mergeStore) Get(_ context.Context, _, flowID string) (*Flow, error) {
