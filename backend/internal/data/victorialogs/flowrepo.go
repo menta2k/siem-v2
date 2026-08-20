@@ -34,6 +34,20 @@ func (r *FlowRepo) Store(ctx context.Context, f *flow.Flow) error {
 	return r.client.Insert(ctx, r.tenant, docs)
 }
 
+// StoreFlows persists many flows in one insert per call (the pipeline's bulk
+// path). A catch-up burst once produced 200k flow closes in one flush tick;
+// per-flow inserts turned that into 200k HTTP round trips.
+func (r *FlowRepo) StoreFlows(ctx context.Context, flows []*flow.Flow) error {
+	docs := make([]Document, 0, len(flows)*3)
+	for _, f := range flows {
+		docs = append(docs, flowDocument(f))
+		for i := range f.Events {
+			docs = append(docs, eventDocument(f.Tenant, &f.Events[i], f.FlowID))
+		}
+	}
+	return r.client.Insert(ctx, r.tenant, docs)
+}
+
 // StoreRaw writes the unmodified provider record alongside its normalized form,
 // which Constitution Principle II requires for the full retention period.
 func (r *FlowRepo) StoreRaw(ctx context.Context, tenant string, provider schema.Provider,

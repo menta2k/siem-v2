@@ -67,7 +67,9 @@ type Pipeline struct {
 	mu sync.Mutex
 	// recentKeys remembers correlation keys stored within the merge horizon,
 	// so the amend path costs one point-read ONLY for genuine latecomers
-	// rather than for every closing flow.
+	// rather than for every closing flow. Its own mutex: it is touched during
+	// storage, which deliberately runs OUTSIDE p.mu.
+	recentMu   sync.Mutex
 	recentKeys map[string]time.Time
 	// events holds parsed events awaiting correlation, keyed by event id.
 	events map[string]schema.Event
@@ -201,13 +203,17 @@ func (p *Pipeline) Correlate() {
 }
 
 // Flush materializes and stores every flow whose window has closed.
+//
+// The lock covers ONLY the in-memory bookkeeping. Storage runs outside it:
+// a catch-up burst once closed 200k windows in one tick, and storing them
+// under the mutex froze the consumer (accumulate takes the same lock) for
+// the whole write — the acks stopped and the backlog regrew.
 func (p *Pipeline) Flush(ctx context.Context) (int, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	now := p.Now()
 	ready := p.Window.Ready(now)
 
-	stored := 0
+	flows := make([]*Flow, 0, len(ready))
 	for _, state := range ready {
 		f := Materialize(state.CorrelationKey, state.Events, Options{
 			Tenant:         state.Tenant,
@@ -221,37 +227,89 @@ func (p *Pipeline) Flush(ctx context.Context) (int, error) {
 			continue
 		}
 		f.Amended = state.Amended
+		f.CorrelationKey = state.CorrelationKey
+		flows = append(flows, f)
 
-		// A key stored within the merge horizon means this "new" flow is a
-		// straggler for an existing one: merge rather than duplicate.
-		if p.Loader != nil {
-			if _, seen := p.recentKeys[state.CorrelationKey]; seen {
-				if merged := p.mergeWithStored(ctx, state.Tenant, state.CorrelationKey, f, now); merged != nil {
-					f = merged
-				}
-			}
-		}
-
-		if p.Store != nil {
-			if err := p.Store.Store(ctx, f); err != nil {
-				return stored, fmt.Errorf("store flow %s: %w", f.FlowID, err)
-			}
-		}
-		if p.recentKeys == nil {
-			p.recentKeys = map[string]time.Time{}
-		}
-		p.recentKeys[state.CorrelationKey] = now
-		p.pruneRecentKeys(now)
 		for _, id := range collectEventIDs(state.Events) {
 			delete(p.events, id)
 		}
 		delete(p.bridged, state.CorrelationKey)
-		if p.OnFlow != nil {
-			p.OnFlow(f)
-		}
-		stored++
 	}
+	p.mu.Unlock()
+
+	stored := 0
+	// Bulk-capable stores take large slices in few calls; per-flow inserts
+	// are kept only as the fallback for stores without the capability.
+	bulk, bulkOK := p.Store.(BulkStore)
+	pending := make([]*Flow, 0, storeChunk)
+	emit := func(fs []*Flow) error {
+		if len(fs) == 0 {
+			return nil
+		}
+		if bulkOK {
+			if err := bulk.StoreFlows(ctx, fs); err != nil {
+				return fmt.Errorf("store %d flows: %w", len(fs), err)
+			}
+		} else if p.Store != nil {
+			for _, f := range fs {
+				if err := p.Store.Store(ctx, f); err != nil {
+					return fmt.Errorf("store flow %s: %w", f.FlowID, err)
+				}
+			}
+		}
+		p.recentMu.Lock()
+		if p.recentKeys == nil {
+			p.recentKeys = map[string]time.Time{}
+		}
+		for _, f := range fs {
+			p.recentKeys[f.CorrelationKey] = now
+		}
+		p.pruneRecentKeys(now)
+		p.recentMu.Unlock()
+		if p.OnFlow != nil {
+			for _, f := range fs {
+				p.OnFlow(f)
+			}
+		}
+		return nil
+	}
+
+	for _, f := range flows {
+		if p.Loader != nil {
+			p.recentMu.Lock()
+			_, seen := p.recentKeys[f.CorrelationKey]
+			p.recentMu.Unlock()
+			if seen {
+				if merged := p.mergeWithStored(ctx, f.Tenant, f.CorrelationKey, f, now); merged != nil {
+					merged.CorrelationKey = f.CorrelationKey
+					f = merged
+				}
+			}
+		}
+		pending = append(pending, f)
+		if len(pending) >= storeChunk {
+			if err := emit(pending); err != nil {
+				return stored, err
+			}
+			stored += len(pending)
+			pending = pending[:0]
+		}
+	}
+	if err := emit(pending); err != nil {
+		return stored, err
+	}
+	stored += len(pending)
 	return stored, nil
+}
+
+// storeChunk bounds one bulk insert; large enough to amortize the round
+// trip, small enough that one call's payload stays reasonable.
+const storeChunk = 500
+
+// BulkStore is the optional fast path: stores that can persist many flows
+// per call implement it; the pipeline falls back to per-flow Store otherwise.
+type BulkStore interface {
+	StoreFlows(ctx context.Context, flows []*Flow) error
 }
 
 // methodFor infers the join tier from the correlation key's shape. Heuristic
