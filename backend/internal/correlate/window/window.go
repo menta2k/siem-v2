@@ -101,6 +101,10 @@ func (w *Window) Ready(now time.Time) []*State {
 			st.Closed, st.ClosedAt = true, now
 			ready = append(ready, st)
 			delete(w.states, key)
+		case w.terminallyComplete(st):
+			st.Closed, st.ClosedAt = true, now
+			ready = append(ready, st)
+			delete(w.states, key)
 		case now.Sub(st.FirstArrival) >= w.opts.LateArrival:
 			st.Closed, st.ClosedAt = true, now
 			ready = append(ready, st)
@@ -121,6 +125,45 @@ func (w *Window) hasAllLayers(st *State) bool {
 		seen[e.Layer] = true
 	}
 	return len(seen) >= w.opts.ExpectedLayers
+}
+
+// terminallyComplete reports whether the flow was stopped by a layer AND every
+// layer up to and including that stop has already reported.
+//
+// A block ends the request: no deeper layer will ever produce a record, so a
+// blocked flow is as complete as it will ever be the moment its upstream layers
+// are all in. Closing it then — rather than waiting out the full late-arrival
+// window — makes an edge or DataDome block searchable in seconds instead of
+// minutes, exactly as a full 4-layer flow already closes early.
+//
+// The stop is the SHALLOWEST terminating layer: a deeper terminating record
+// cannot exist unless its layer ran, and the shallowest is where the request
+// actually died. Layer orders are contiguous from 0 (edge), so "all layers up to
+// the stop" is simply orders 0..stop, checked without a reverse lookup.
+func (w *Window) terminallyComplete(st *State) bool {
+	present := map[int]bool{}
+	stop := -1
+	for _, e := range st.Events {
+		o, ok := e.Layer.Order()
+		if !ok {
+			continue
+		}
+		present[o] = true
+		if e.Verdict.Terminating && (stop < 0 || o < stop) {
+			stop = o
+		}
+	}
+	if stop < 0 {
+		// Nothing terminated the request; only the full-window or all-layers
+		// paths can close it. An allowed flow might still gain a deeper layer.
+		return false
+	}
+	for o := 0; o <= stop; o++ {
+		if !present[o] {
+			return false
+		}
+	}
+	return true
 }
 
 // InFlight reports how many flows are open. This is a bounded-memory signal: a
