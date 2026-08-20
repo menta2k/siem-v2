@@ -19,6 +19,9 @@ storage:
     url: "nats://localhost:4222"
     stream_name: "SIEM_RAW"
     max_age_days: 7
+    # Hard cap on the ingest buffer's on-disk size (Discard=old drops the
+    # oldest processed msg at the cap instead of ever blocking ingest).
+    max_bytes_gib: 20
   valkey:
     addrs: ["localhost:56379"]
   postgres:

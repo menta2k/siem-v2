@@ -73,6 +73,12 @@ type JetStream struct {
 	URL        string `yaml:"url"`
 	StreamName string `yaml:"stream_name"`
 	MaxAgeDays int    `yaml:"max_age_days"`
+	// MaxBytesGiB caps the ingest buffer's on-disk size. It is a HARD safety:
+	// without it the stream is bounded only by MaxAgeDays and can overrun the
+	// JetStream file-store ceiling, at which point NATS rejects every publish and
+	// all ingest 503s (a production outage, 2026-08-20). With Discard=old the cap
+	// drops the oldest already-processed message instead of ever blocking ingest.
+	MaxBytesGiB int `yaml:"max_bytes_gib"`
 }
 
 // ObjectStore is addressed through the S3 API only, so any S3-compatible store
@@ -143,7 +149,7 @@ func Default() *Config {
 		},
 		Storage: Storage{
 			Postgres:  Postgres{MaxConns: 20, MinConns: 2},
-			JetStream: JetStream{StreamName: "siem-raw", MaxAgeDays: 7},
+			JetStream: JetStream{StreamName: "siem-raw", MaxAgeDays: 7, MaxBytesGiB: 20},
 		},
 		Ingest: Ingest{
 			MaxBodyBytes: 1 << 30, // Logpush max_upload_bytes tops out at 1GB (R4)

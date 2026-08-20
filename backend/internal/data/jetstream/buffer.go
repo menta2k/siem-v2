@@ -29,12 +29,18 @@ type Config struct {
 	StreamName string
 	Subject    string
 	MaxAge     time.Duration
+	// MaxBytes caps the stream's on-disk size. With Discard=old, reaching it
+	// drops the oldest (already-processed) message rather than rejecting new
+	// publishes — the difference between a self-healing buffer and an ingest
+	// outage when the JetStream file-store fills.
+	MaxBytes int64
 }
 
 func DefaultConfig() Config {
 	return Config{
 		URL: nats.DefaultURL, StreamName: "SIEM_RAW",
 		Subject: "siem.raw", MaxAge: 7 * 24 * time.Hour,
+		MaxBytes: 20 << 30, // 20 GiB
 	}
 }
 
@@ -59,17 +65,28 @@ func Connect(cfg Config) (*Buffer, error) {
 	// FileStorage, not memory: the entire point of this component is surviving a
 	// crash. A memory-backed stream would satisfy the interface and violate the
 	// principle.
-	_, err = js.AddStream(&nats.StreamConfig{
+	streamCfg := &nats.StreamConfig{
 		Name:      cfg.StreamName,
 		Subjects:  []string{cfg.Subject + ".>"},
 		Storage:   nats.FileStorage,
 		Retention: nats.LimitsPolicy,
 		MaxAge:    cfg.MaxAge,
+		MaxBytes:  cfg.MaxBytes,
 		Discard:   nats.DiscardOld,
-	})
-	if err != nil && !isStreamExists(err) {
-		conn.Close()
-		return nil, fmt.Errorf("create stream %s: %w", cfg.StreamName, err)
+	}
+	if _, err = js.AddStream(streamCfg); err != nil {
+		if !isStreamExists(err) {
+			conn.Close()
+			return nil, fmt.Errorf("create stream %s: %w", cfg.StreamName, err)
+		}
+		// The stream predates this process. Reconcile its config so a cap added
+		// after the stream was first created (e.g. MaxBytes) is actually applied,
+		// rather than silently keeping the old unbounded config until someone
+		// deletes the stream by hand.
+		if _, err = js.UpdateStream(streamCfg); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("update stream %s: %w", cfg.StreamName, err)
+		}
 	}
 
 	return &Buffer{conn: conn, js: js, subject: cfg.Subject}, nil

@@ -60,11 +60,16 @@ func run(confPath string, logger *slog.Logger) error {
 		return err
 	}
 
+	maxBytesGiB := cfg.Storage.JetStream.MaxBytesGiB
+	if maxBytesGiB <= 0 {
+		maxBytesGiB = 20
+	}
 	buffer, err := jetstream.Connect(jetstream.Config{
 		URL:        cfg.Storage.JetStream.URL,
 		StreamName: cfg.Storage.JetStream.StreamName,
 		Subject:    "siem.raw",
 		MaxAge:     time.Duration(cfg.Storage.JetStream.MaxAgeDays) * 24 * time.Hour,
+		MaxBytes:   int64(maxBytesGiB) << 30,
 	})
 	if err != nil {
 		return fmt.Errorf("ingest buffer: %w", err)
