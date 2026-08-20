@@ -126,6 +126,9 @@ func buildPipeline(vl *victorialogs.Client, tenant victorialogs.Tenant,
 	})
 
 	p := flow.NewPipeline(repo, &ingest.MemoryDeadLetter{}, w)
+	// The same repo serves as loader, enabling merge-on-close for stragglers
+	// that arrive after their flow closed (batch-delivered providers).
+	p.Loader = repo
 	// The token key turns a sensitive value into a stable pseudonym, so an
 	// analyst can still see that the same value recurred without ever seeing it.
 	// Absent a key, sensitive values are plainly masked rather than left readable.

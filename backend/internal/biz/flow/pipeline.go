@@ -48,12 +48,24 @@ type Pipeline struct {
 	// OnParseFailure is called for each dead-lettered record.
 	OnParseFailure func(schema.Provider, error)
 
+	// Loader, when set, lets a closing flow MERGE with one already stored
+	// under the same correlation key instead of duplicating it. This is what
+	// joins a batch-delivered provider (Logpush, minutes late) to a real-time
+	// one (Vector, seconds) when the gap exceeds the window: the Amender's
+	// semantics — one late-corrected flow beats two flows for one request
+	// (FR-018) — finally wired into the write path.
+	Loader FlowLoader
+
 	// mu guards events, records and bridged. ProcessBatch runs on the buffer
 	// consumer's goroutine while Correlate and Flush run on the flush ticker's,
 	// and the two met for the first time at 24k events/sec as a fatal
 	// "concurrent map read and map write" — a crash the load test exists to
 	// find before production traffic does.
 	mu sync.Mutex
+	// recentKeys remembers correlation keys stored within the merge horizon,
+	// so the amend path costs one point-read ONLY for genuine latecomers
+	// rather than for every closing flow.
+	recentKeys map[string]time.Time
 	// events holds parsed events awaiting correlation, keyed by event id.
 	events map[string]schema.Event
 	// identifiers holds each event's identifier set for grouping.
@@ -200,11 +212,26 @@ func (p *Pipeline) Flush(ctx context.Context) (int, error) {
 		}
 		f.Amended = state.Amended
 
+		// A key stored within the merge horizon means this "new" flow is a
+		// straggler for an existing one: merge rather than duplicate.
+		if p.Loader != nil {
+			if _, seen := p.recentKeys[state.CorrelationKey]; seen {
+				if merged := p.mergeWithStored(ctx, state.Tenant, state.CorrelationKey, f, now); merged != nil {
+					f = merged
+				}
+			}
+		}
+
 		if p.Store != nil {
 			if err := p.Store.Store(ctx, f); err != nil {
 				return stored, fmt.Errorf("store flow %s: %w", f.FlowID, err)
 			}
 		}
+		if p.recentKeys == nil {
+			p.recentKeys = map[string]time.Time{}
+		}
+		p.recentKeys[state.CorrelationKey] = now
+		p.pruneRecentKeys(now)
 		for _, id := range collectEventIDs(state.Events) {
 			delete(p.events, id)
 		}
@@ -253,3 +280,64 @@ func hashOf(b []byte) string {
 
 // InFlight reports how many flows are open, a bounded-memory signal.
 func (p *Pipeline) InFlight() int { return p.Window.InFlight() }
+
+// mergeHorizon bounds how long a stored flow stays mergeable. Beyond it a
+// straggler opens a duplicate flow — the pre-merge behavior — rather than
+// this map growing without bound.
+const mergeHorizon = time.Hour
+
+// mergeWithStored folds a straggler flow into its stored predecessor.
+// Returns nil when there is nothing to merge with, and never fails the flush:
+// a duplicate flow beats a lost one.
+func (p *Pipeline) mergeWithStored(ctx context.Context, tenant, key string, late *Flow, now time.Time) *Flow {
+	existing, err := p.Loader.Get(ctx, tenant, late.FlowID)
+	if err != nil || existing == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	events := make([]schema.Event, 0, len(existing.Events)+len(late.Events))
+	for _, e := range existing.Events {
+		if !seen[e.EventID] {
+			seen[e.EventID] = true
+			events = append(events, e)
+		}
+	}
+	added := false
+	for _, e := range late.Events {
+		if !seen[e.EventID] {
+			seen[e.EventID] = true
+			events = append(events, e)
+			added = true
+		}
+	}
+	if !added {
+		return existing
+	}
+	merged := Materialize(key, events, Options{
+		Tenant:         tenant,
+		Method:         existing.Method,
+		Bridged:        existing.Bridged || late.Bridged,
+		ExpectedLayers: p.ExpectedLayers,
+		Closed:         true,
+		Now:            now,
+	})
+	if merged == nil {
+		return nil
+	}
+	// The change is marked, never hidden: a flow that grew after someone may
+	// have looked at it is something they need to know (FR-018).
+	merged.Amended = true
+	return merged
+}
+
+func (p *Pipeline) pruneRecentKeys(now time.Time) {
+	// Amortized: prune only when the map is large, scanning once.
+	if len(p.recentKeys) < 500000 {
+		return
+	}
+	for k, at := range p.recentKeys {
+		if now.Sub(at) > mergeHorizon {
+			delete(p.recentKeys, k)
+		}
+	}
+}

@@ -55,7 +55,7 @@ func (r *FlowRepo) Get(ctx context.Context, tenant, flowID string) (*flow.Flow, 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.client.Query(ctx, r.tenant, q, 1)
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +78,10 @@ func (r *FlowRepo) Search(ctx context.Context, tenant string, s FlowSearch) ([]*
 		return nil, err
 	}
 	out := make([]*flow.Flow, 0, len(rows))
+	// An amended flow is a NEW document version under the same flow id (the
+	// store is append-only); rows arrive newest-first, so the first version
+	// seen per id is the current one and older versions are skipped.
+	seen := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		f, err := decodeFlow(row)
 		if err != nil {
@@ -86,6 +90,10 @@ func (r *FlowRepo) Search(ctx context.Context, tenant string, s FlowSearch) ([]*
 			// by an error page.
 			continue
 		}
+		if seen[f.FlowID] {
+			continue
+		}
+		seen[f.FlowID] = true
 		out = append(out, f)
 	}
 	flow.SortFlows(out)

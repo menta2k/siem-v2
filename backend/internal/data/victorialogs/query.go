@@ -194,7 +194,10 @@ func BuildFlowByIDQuery(tenant, flowID string) (string, error) {
 	if !safeValue.MatchString(flowID) || flowID == "" {
 		return "", &ErrUnsafeValue{Field: "flow_id", Value: flowID}
 	}
-	return fmt.Sprintf(`{tenant=%s,record_kind=%s} flow_id:=%s`,
+	// Newest version explicitly: amendments append new documents under the
+	// same flow id, and an unsorted limit-1 would return an ARBITRARY version
+	// — a merge against a stale copy silently drops events.
+	return fmt.Sprintf(`{tenant=%s,record_kind=%s} flow_id:=%s | sort by (_time desc) | limit 1`,
 		quote(tenant), quote(string(KindFlow)), quote(flowID)), nil
 }
 

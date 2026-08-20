@@ -212,3 +212,16 @@ func TestLimitIsBoundedAndDefaulted(t *testing.T) {
 		t.Fatal("negative offset must be refused")
 	}
 }
+
+// TestGetFetchesTheNewestVersion: amendments append documents under one flow
+// id; an unsorted limit-1 returns an arbitrary version and a merge against a
+// stale copy silently drops events.
+func TestGetFetchesTheNewestVersion(t *testing.T) {
+	q, err := BuildFlowByIDQuery("acme", "flow:ray:abc")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(q, "| sort by (_time desc) | limit 1") {
+		t.Fatalf("by-id fetch must pin the newest version: %s", q)
+	}
+}
