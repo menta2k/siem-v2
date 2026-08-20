@@ -148,3 +148,26 @@ func TestSupportIDIsSurfacedAsTheVendorReference(t *testing.T) {
 		}
 	}
 }
+
+func TestHostFromCapturedRequest(t *testing.T) {
+	// ASM's KV has no host field; the vhost lives only in the request blob.
+	raw := `unit_hostname="asm1",support_id="123",method="GET",uri="/x",request="GET /x HTTP/1.1\r\nHost: app2.jobs.bg\r\nCF-Ray: a2df789f68d6dd11\r\n",response_code="200",date_time="2026-08-20 09:00:00"`
+	e, err := New().Parse([]byte(raw), time.Now())
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if e.Request.Host != "app2.jobs.bg" {
+		t.Fatalf("host must be scraped from the request blob, got %q", e.Request.Host)
+	}
+}
+
+func TestHostPrefersDedicatedField(t *testing.T) {
+	raw := `support_id="1",method="GET",uri="/x",host="vhost.example.com",request="GET /x HTTP/1.1\r\nHost: other.example.com\r\n",response_code="200",date_time="2026-08-20 09:00:00"`
+	e, err := New().Parse([]byte(raw), time.Now())
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if e.Request.Host != "vhost.example.com" {
+		t.Fatalf("a dedicated host field must win over the header, got %q", e.Request.Host)
+	}
+}

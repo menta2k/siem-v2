@@ -30,6 +30,16 @@ var kvRE = regexp.MustCompile(`(\w+)="((?:[^"\\]|\\.)*)"`)
 // not part of the id Cloudflare logs, so it is deliberately excluded.
 var cfRayRE = regexp.MustCompile(`(?i)CF-Ray:\s*([0-9a-f]+)`)
 
+// hostRE finds the Host header inside the captured request text. ASM's KV log
+// has no host field of its own — the vhost lives only in the raw request — so
+// without this an F5 record (and any flow it stands alone in) has no host.
+// The captured request keeps its CRLFs as literal \r\n escapes, so the header
+// is delimited by literal backslashes, not real newlines. The value runs up to
+// the next escape or real line break.
+var hostRE = regexp.MustCompile(`(?i)(?:\\r\\n|\\n|[
+]|^)Host:[ 	]*([^
+\\]+)`)
+
 type Parser struct{}
 
 func New() *Parser { return &Parser{} }
@@ -83,6 +93,7 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 			Country: strings.ToUpper(fields["geo_location"]),
 		},
 		Request: schema.Request{
+			Host:   hostFrom(fields),
 			Method: fields["method"],
 			Path:   fields["uri"],
 			Query:  fields["query_string"],
@@ -100,6 +111,18 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 	}
 	normalize.ApplyTimeQuality(e)
 	return e, nil
+}
+
+// hostFrom resolves the request host from a dedicated field if the logging
+// profile provides one, else the Host header scraped from the captured request.
+func hostFrom(fields map[string]string) string {
+	if h := firstNonEmpty(fields["host"], fields["virtual_server"]); h != "" {
+		return h
+	}
+	if m := hostRE.FindStringSubmatch(fields["request"]); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
 }
 
 // extractIdentifiers looks for CF-Ray in a dedicated field first, then in the
