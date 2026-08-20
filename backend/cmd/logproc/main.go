@@ -24,6 +24,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/correlate/window"
 	"github.com/menta2k/siem-v2/backend/internal/data/jetstream"
 	"github.com/menta2k/siem-v2/backend/internal/data/postgres"
+	datavalkey "github.com/menta2k/siem-v2/backend/internal/data/valkey"
 	"github.com/menta2k/siem-v2/backend/internal/data/victorialogs"
 	"github.com/menta2k/siem-v2/backend/internal/ingest"
 	"github.com/menta2k/siem-v2/backend/internal/ingest/feedauth"
@@ -38,6 +39,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
 	"github.com/menta2k/siem-v2/backend/internal/observability"
 	"github.com/menta2k/siem-v2/backend/internal/version"
+	valkeygo "github.com/valkey-io/valkey-go"
 )
 
 func main() {
@@ -86,6 +88,21 @@ func run(confPath string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Correlation state survives restart (FR-023): a deploy must resume the
+	// in-flight window, not discard every flow whose window was still open.
+	// Best-effort — a Valkey outage degrades to the pre-existing behaviour
+	// (lose the in-flight window on restart) rather than blocking startup.
+	corrState := buildCorrelationState(cfg, logger)
+	if corrState != nil {
+		if states, err := corrState.Load(ctx); err != nil {
+			logger.Warn("could not load correlation window; starting empty", "error", err)
+		} else if len(states) > 0 {
+			pipeline.Restore(states)
+			_ = corrState.Clear(ctx) // consumed; a later crash must not replay it
+			logger.Info("restored in-flight correlation window", "states", len(states))
+		}
+	}
+
 	// Per-feed ingest credentials live in Postgres, served here from a
 	// refreshed in-memory snapshot. Postgres being down keeps ingest running
 	// on the last snapshot; only a store that has NEVER loaded answers 503.
@@ -132,6 +149,15 @@ func run(confPath string, logger *slog.Logger) error {
 	// point rather than replaying the tail unnecessarily.
 	if n, err := pipeline.Flush(shutdownCtx); err == nil && n > 0 {
 		logger.Info("flushed flows during shutdown", "count", n)
+	}
+	// Persist whatever remains open so the next boot resumes it (FR-023).
+	if corrState != nil {
+		states := pipeline.Snapshot()
+		if err := corrState.Save(shutdownCtx, states); err != nil {
+			logger.Warn("could not persist correlation window", "error", err)
+		} else {
+			logger.Info("persisted in-flight correlation window", "states", len(states))
+		}
 	}
 	return srv.Shutdown(shutdownCtx)
 }
@@ -444,4 +470,19 @@ func (c *filterCache) setFor(tenant string) *filter.Set {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.sets[tenant] // nil = keep everything
+}
+
+// buildCorrelationState connects the Valkey-backed window persistence, or
+// returns nil (restart still works, just without resuming the in-flight
+// window) when Valkey is unconfigured or unreachable.
+func buildCorrelationState(cfg *conf.Config, logger *slog.Logger) *datavalkey.CorrelationState {
+	if len(cfg.Storage.Valkey.Addrs) == 0 {
+		return nil
+	}
+	client, err := valkeygo.NewClient(valkeygo.ClientOption{InitAddress: cfg.Storage.Valkey.Addrs})
+	if err != nil {
+		logger.Warn("valkey unavailable; the in-flight window will not survive restart", "error", err)
+		return nil
+	}
+	return datavalkey.NewCorrelationState(client)
 }

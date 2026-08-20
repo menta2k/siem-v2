@@ -132,3 +132,34 @@ func TestFilteredRecordsAreNeverStoredAnywhere(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotRestoreResumesOpenFlows: a restart mid-window must resume, not
+// discard, a partial flow (FR-023) — the gap that lost a manually-triggered
+// CF block during a deploy.
+func TestSnapshotRestoreResumesOpenFlows(t *testing.T) {
+	mk := func() *Pipeline {
+		w := window.New(window.Options{LateArrival: time.Hour, ExpectedLayers: 4})
+		p := NewPipeline(&mergeStore{byID: map[string]*Flow{}}, &ingest.MemoryDeadLetter{}, w)
+		p.Register(cloudflare.New())
+		return p
+	}
+	p1 := mk()
+	cf := `{"RayID":"a2df4b3d4da6d0e8","ParentRayID":"00","EdgeStartTimestamp":"2026-08-20T06:20:45Z","ClientIP":"1.2.3.4","ClientRequestHost":"jobs.bg","ClientRequestURI":"/?a=x","ClientRequestMethod":"GET","EdgeResponseStatus":403,"SecurityAction":"block"}`
+	if err := p1.ProcessBatch(t.Context(), ingest.RawBatch{
+		Provider: schema.ProviderCloudflare, Tenant: "acme", SourceID: "c1",
+		Records: [][]byte{[]byte(cf)},
+	}); err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	snap := p1.Snapshot() // drains events into the window and returns it
+	if len(snap) != 1 {
+		t.Fatalf("the open flow must be in the snapshot, got %d", len(snap))
+	}
+
+	// A fresh process restores and the flow is still in flight, still findable.
+	p2 := mk()
+	p2.Restore(snap)
+	if p2.InFlight() != 1 {
+		t.Fatalf("restored window must carry the open flow, in-flight=%d", p2.InFlight())
+	}
+}

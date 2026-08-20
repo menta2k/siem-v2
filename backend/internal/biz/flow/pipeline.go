@@ -371,6 +371,23 @@ func hashOf(b []byte) string {
 // InFlight reports how many flows are open, a bounded-memory signal.
 func (p *Pipeline) InFlight() int { return p.Window.InFlight() }
 
+// Snapshot drains accumulated events into the window and returns the whole
+// in-flight state for persistence (FR-023). Called on graceful shutdown so a
+// restart resumes rather than discarding partial flows.
+func (p *Pipeline) Snapshot() []*window.State {
+	p.Correlate() // move any events still in p.events into the window first
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Window.Snapshot()
+}
+
+// Restore reinstates a persisted window on startup.
+func (p *Pipeline) Restore(states []*window.State) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Window.Restore(states)
+}
+
 // RawItem is one original record queued for raw storage.
 type RawItem struct {
 	ID      string
