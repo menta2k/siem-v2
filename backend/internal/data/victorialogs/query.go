@@ -228,7 +228,9 @@ func BuildRawExpiryQuery(tenant string, olderThan time.Time) (string, error) {
 	if !safeValue.MatchString(tenant) || tenant == "" {
 		return "", &ErrUnsafeValue{Field: "tenant", Value: tenant}
 	}
-	return fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[min, %s)`,
+	// _time:<ts selects everything strictly before the cutoff. VictoriaLogs has
+	// no "min" bound keyword, so an open lower bound is expressed this way.
+	return fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:<%s`,
 		quote(tenant), quote(string(KindRaw)),
-		olderThan.UTC().Format(time.RFC3339Nano)), nil
+		quote(olderThan.UTC().Format(time.RFC3339Nano))), nil
 }

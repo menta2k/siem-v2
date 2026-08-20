@@ -15,7 +15,7 @@ func TestBuildRawExpiryQuery(t *testing.T) {
 	for _, want := range []string{
 		`tenant="default"`,
 		`record_kind="raw"`,
-		`_time:[min, 2026-08-20T12:00:00Z)`,
+		`_time:<"2026-08-20T12:00:00Z"`,
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query %q missing %q", q, want)
