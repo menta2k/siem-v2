@@ -95,6 +95,24 @@ function numberOrUndefined(value: string | number | null): number | undefined {
     <v-card-text>
       <v-form @submit.prevent="apply">
         <!--
+          Quick find: one box that matches ANY id a flow carries — every ray
+          (visitor OR Worker subrequest), every vendor request id (F5 support_id,
+          DataDome request id) and the flow id. A Worker subrequest ray is the
+          ray F5/nginx capture and show in their consoles, and it is a real ray
+          of the flow, so pasting it here finds the request even though it is not
+          the canonical ray. Start from whatever id is in front of you.
+        -->
+        <v-text-field
+          v-model="draft.query"
+          label="Quick find"
+          placeholder="Any ray, F5 support ID, or flow ID"
+          hint="Matches any identifier the flow carries"
+          persistent-hint clearable class="mb-3"
+          prepend-inner-icon="mdi-magnify"
+          data-test="quick-find"
+        />
+
+        <!--
           The one identifier that is definitive. Every layer that saw the request
           reports the same ray, so this is the fastest route from "one layer saw
           this" to "what did the others see" — and it does not depend on any
@@ -125,7 +143,7 @@ function numberOrUndefined(value: string | number | null): number | undefined {
         <v-text-field
           v-model="draft.ray_id"
           label="Ray ID"
-          hint="Exact match across every layer that saw the request"
+          hint="Matches any ray of the flow, incl. Worker subrequest rays"
           persistent-hint clearable class="mb-3"
           prepend-inner-icon="mdi-identifier"
         />

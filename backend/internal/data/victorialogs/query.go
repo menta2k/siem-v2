@@ -51,6 +51,12 @@ type FlowSearch struct {
 	MaxLayers int
 	// HasQualityFlag surfaces flows carrying a specific data-quality condition.
 	HasQualityFlag string
+	// Query is a quick-find token matched against EVERY id a flow carries: any
+	// ray (visitor or subrequest), any vendor request id (F5 support_id, the
+	// DataDome request id), and the flow id itself. It exists so an operator can
+	// paste whatever id the console in front of them shows and land on the flow,
+	// without knowing which id space it belongs to.
+	Query string
 
 	Limit int
 	// Offset is the pagination cursor. Meaningful only because the query sorts
@@ -104,7 +110,6 @@ func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 		{"rule_id", s.RuleID},
 		{"country", strings.ToUpper(s.Country)},
 		{"completeness", s.Completeness},
-		{"ray_id", s.RayID},
 		{"correlation_method", s.CorrelationMethod},
 	}
 	for _, f := range exact {
@@ -155,6 +160,24 @@ func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 			return "", &ErrUnsafeValue{Field: "support_id", Value: s.VendorRequestID}
 		}
 		parts = append(parts, fmt.Sprintf("vendor_request_ids:%s", quote(s.VendorRequestID)))
+	}
+	// Ray match is a word match against ray_ids (all of the flow's rays), not an
+	// equality on the single canonical ray_id: a subrequest ray is a real ray of
+	// the flow and must find it just as the visitor ray does.
+	if s.RayID != "" {
+		if !safeValue.MatchString(s.RayID) {
+			return "", &ErrUnsafeValue{Field: "ray_id", Value: s.RayID}
+		}
+		parts = append(parts, fmt.Sprintf("ray_ids:%s", quote(s.RayID)))
+	}
+	// Quick-find: one token, matched across every id space at once, so an
+	// investigation can start from whatever id the operator happens to hold.
+	if s.Query != "" {
+		if !safeValue.MatchString(s.Query) {
+			return "", &ErrUnsafeValue{Field: "query", Value: s.Query}
+		}
+		q := quote(s.Query)
+		parts = append(parts, fmt.Sprintf("(ray_ids:%s OR vendor_request_ids:%s OR flow_id:%s)", q, q, q))
 	}
 	if s.PathPrefix != "" {
 		if !safeValue.MatchString(s.PathPrefix) {

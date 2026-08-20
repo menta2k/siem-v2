@@ -377,6 +377,7 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		UserAgent         string    `json:"user_agent"`
 		RayID             string    `json:"ray_id"`
 		SupportID         string    `json:"support_id"`
+		Query             string    `json:"query"`
 		CorrelationMethod string    `json:"correlation_method"`
 		Bridged           *bool     `json:"bridged"`
 		ASN               int       `json:"asn"`
@@ -391,15 +392,16 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Note what is absent: there is no free-text query field to populate. The
-	// search is compiled from these typed parameters only.
+	// Quick-find (query) is the one cross-field term: it matches any id the flow
+	// carries (rays, vendor request ids, flow id). Every other parameter is a
+	// typed, single-field filter.
 	flows, err := s.repo.Search(r.Context(), tenantOf(r), victorialogs.FlowSearch{
 		From: req.From, To: req.To, ClientIP: req.ClientIP, Host: req.Host,
 		PathPrefix: req.PathPrefix, Method: req.Method, Status: req.Status,
 		Action: req.Action, Layer: req.Layer, RuleID: req.RuleID,
 		Country: req.Country, Provider: req.Provider,
 		Completeness: req.Completeness, UserAgentSub: req.UserAgent,
-		RayID: req.RayID, VendorRequestID: req.SupportID,
+		RayID: req.RayID, VendorRequestID: req.SupportID, Query: req.Query,
 		CorrelationMethod: req.CorrelationMethod,
 		Bridged:           req.Bridged, ASN: req.ASN,
 		MinLayers: req.MinLayers, MaxLayers: req.MaxLayers,

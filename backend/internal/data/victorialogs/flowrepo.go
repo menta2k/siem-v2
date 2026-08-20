@@ -325,6 +325,12 @@ func flowDocument(f *flow.Flow) Document {
 			"layer_count":        len(f.LayersPresent),
 			"amended":            f.Amended,
 			"ray_id":             rayIDOf(f),
+			// EVERY ray this flow carries, space-joined for word-matching. A flow
+			// legitimately spans several rays — the visitor's plus each Worker
+			// subrequest's — and origin layers (F5, nginx) capture the SUBREQUEST
+			// ray, which is the id an operator copies from the vendor console.
+			// Indexing only rayIDOf (one ray) made those searches find nothing.
+			"ray_ids": strings.Join(rayIDs(f), " "),
 			// Each provider's own reference, so an investigation that begins in a
 			// vendor console can find the flow by the id that console showed.
 			"vendor_request_ids": vendorRequestIDsJoined(f),
@@ -440,6 +446,33 @@ func rayIDOf(f *flow.Flow) string {
 		}
 	}
 	return ""
+}
+
+// rayIDs returns every distinct ray this flow carries, in bare form (no
+// namespace prefix): each event's ray plus any ray-namespaced identifier and
+// the correlation key when it is a ray. This is what makes a subrequest ray —
+// the one F5/nginx see — findable, not just the canonical parent ray.
+func rayIDs(f *flow.Flow) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	add(strings.TrimPrefix(f.CorrelationKey, "ray:"))
+	for _, e := range f.Events {
+		add(e.RayID)
+		for _, id := range e.Identifiers {
+			if strings.HasPrefix(id, "ray:") {
+				add(strings.TrimPrefix(id, "ray:"))
+			}
+		}
+	}
+	return out
 }
 
 // qualityFlags flattens the flow's data-quality conditions for filtering.

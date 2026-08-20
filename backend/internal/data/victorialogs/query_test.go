@@ -140,7 +140,7 @@ func TestEnrichedFiltersCompile(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	for _, want := range []string{
-		`ray_id:="a2d6ea0f6813ccd4"`, `correlation_method:="heuristic"`,
+		`ray_ids:"a2d6ea0f6813ccd4"`, `correlation_method:="heuristic"`,
 		"bridged:=true", "asn:=64512", "layer_count:>=2", "layer_count:<=4",
 		`data_quality_flags:"clock_skew"`,
 	} {

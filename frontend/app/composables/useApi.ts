@@ -79,6 +79,12 @@ export interface FlowSearch {
   rule_id?: string
   country?: string
   asn?: number
+  /**
+   * Quick find: one token matched across every id the flow carries — any ray
+   * (visitor or Worker subrequest), any vendor request id (F5 support_id,
+   * DataDome request id) and the flow id. Paste whatever the console shows.
+   */
+  query?: string
   /** The definitive identifier: every layer that saw the request reports it. */
   ray_id?: string
   /** F5's own reference — what an operator quotes to F5 support. */
