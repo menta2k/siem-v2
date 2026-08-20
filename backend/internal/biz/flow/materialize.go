@@ -70,14 +70,10 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 	if len(expected) == 0 {
 		expected = expectedLayers
 	}
-	// The completeness boundary is the terminating layer; failing that, the edge
-	// if Cloudflare served the response from cache (the origin was never
-	// contacted, so its absence is not a gap).
-	boundary := f.TerminatingLayer
-	if boundary == "" && edgeServedFromCache(ordered) {
-		boundary = schema.LayerEdge
-	}
-	expected = expectedUpTo(expected, boundary)
+	// Completeness is judged only up to the boundary layer — the point past
+	// which the request legitimately never went, so a deeper layer's absence
+	// is not a gap.
+	expected = expectedUpTo(expected, completenessBoundary(ordered, f.TerminatingLayer))
 	f.LayersPresent, f.LayersMissing = layerCoverage(ordered, expected)
 	f.TimingAttribution = timingAttribution(ordered)
 	f.Client, f.Request = denormalize(ordered)
@@ -94,6 +90,39 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 }
 
 // layerCoverage reports which expected layers reported and which did not.
+// completenessBoundary is the deepest layer the request is known to have
+// reached, so coverage below it is genuinely absent rather than lost:
+//
+//   - the DEEPEST layer that actually has a record — if the origin logged the
+//     request, it passed every layer above it, even a response-side WAF block
+//     (F5's "Illegal redirection attempt" blocks the origin's response, so the
+//     origin record is real and expected);
+//   - the terminating layer, when a request-path block stopped it early;
+//   - the origin, for an allowed request that was NOT a cache hit (it should
+//     have reached the origin; a missing origin record is then a real gap).
+//
+// The deepest of these wins.
+func completenessBoundary(ordered []schema.Event, terminating schema.Layer) schema.Layer {
+	best := schema.LayerEdge
+	bestOrder := 0
+	consider := func(l schema.Layer) {
+		if o, ok := l.Order(); ok && o > bestOrder {
+			best, bestOrder = l, o
+		}
+	}
+	for _, e := range ordered {
+		consider(e.Layer)
+	}
+	if terminating != "" {
+		consider(terminating)
+	}
+	// Allowed and not cache-served: the request should have reached the origin.
+	if terminating == "" && !edgeServedFromCache(ordered) {
+		consider(schema.LayerOrigin)
+	}
+	return best
+}
+
 // cacheServedStatuses are the Cloudflare CacheCacheStatus values that mean the
 // edge answered from cache without going to the origin.
 var cacheServedStatuses = map[string]bool{

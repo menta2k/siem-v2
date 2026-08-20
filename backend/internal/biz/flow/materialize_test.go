@@ -471,3 +471,32 @@ func TestCacheHitEdgeFlowIsComplete(t *testing.T) {
 		t.Fatalf("a cache-miss edge-only flow is missing the origin; want partial, got %q", f2.Completeness)
 	}
 }
+
+// TestResponseSideBlockCountsOriginPresent: F5 can block the ORIGIN'S RESPONSE
+// (e.g. "Illegal redirection attempt" on a 302) — the request reached nginx,
+// which logged it, and F5 blocked on the way out. Both records are real; the
+// flow is complete with the origin counted, not a partial 3-layer oddity.
+func TestResponseSideBlockCountsOriginPresent(t *testing.T) {
+	at := time.Now().UTC()
+	events := []schema.Event{
+		{EventID: "cf", Provider: schema.ProviderCloudflare, Layer: schema.LayerEdge,
+			EventTime: at, Verdict: schema.Verdict{Action: "allowed", Mapped: true},
+			Request: schema.Request{Host: "www.jobs.bg", Path: "/x"}},
+		{EventID: "dd", Provider: schema.ProviderDataDome, Layer: schema.LayerBotManagement,
+			EventTime: at, Verdict: schema.Verdict{Action: "allowed", Mapped: true}},
+		{EventID: "ng", Provider: schema.ProviderNginx, Layer: schema.LayerOrigin,
+			EventTime: at, Verdict: schema.Verdict{Action: "allowed", Mapped: true},
+			Response: schema.Response{Status: 302}},
+		{EventID: "f5", Provider: schema.ProviderF5ASM, Layer: schema.LayerAppFirewall,
+			EventTime: at, Verdict: schema.Verdict{Action: "blocked", Terminating: true, Mapped: true},
+			Response: schema.Response{Status: 302}},
+	}
+	f := Materialize("ray:r1", events, Options{Tenant: "acme", Method: keys.TierExact, Closed: true, Now: at})
+	if f.Completeness != Complete {
+		t.Fatalf("a response-side block with all four layers present is complete; got %q missing=%v",
+			f.Completeness, f.LayersMissing)
+	}
+	if len(f.LayersPresent) != 4 {
+		t.Fatalf("all four layers reached the request and must be counted, got %d", len(f.LayersPresent))
+	}
+}
