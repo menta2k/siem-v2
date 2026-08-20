@@ -23,11 +23,30 @@ framing.method = "newline_delimited"
 [transforms.f5_passthrough]
 type = "remap"
 inputs = ["f5_syslog"]
-# The SIEM's own parser handles the key-value format; Vector only strips the
-# syslog framing and forwards the message body untouched, so the ORIGINAL bytes
-# reach the dead-letter store when parsing fails downstream.
+# Two jobs (both from v1, both learned the hard way):
+#
+# 1. Normalize date_time to UTC. BIG-IP logs the APPLIANCE's local clock with
+#    no offset; parsed as UTC that places every event hours in the future,
+#    where a newest-first sort pins F5 flows above everything else and the
+#    other providers look stalled. BIGIP_UTC_OFFSET (e.g. "+0300") declares
+#    the appliance's offset; the default +0000 leaves a UTC appliance alone.
+#
+# 2. Otherwise forward the message body untouched, so the ORIGINAL bytes reach
+#    the dead-letter store when parsing fails downstream.
 source = '''
-. = { "message": string!(.message) }
+line = string!(.message)
+matched, err = parse_regex(line, r'date_time="(?P<dt>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"')
+if err == null {
+  dt = string!(matched.dt)
+  parsed, perr = parse_timestamp(dt + " ${BIGIP_UTC_OFFSET:-+0000}", "%Y-%m-%d %H:%M:%S %z")
+  if perr == null {
+    utc = format_timestamp(parsed, "%Y-%m-%d %H:%M:%S", timezone: "UTC") ?? ""
+    if utc != "" {
+      line = replace(line, "date_time=\"" + dt + "\"", "date_time=\"" + utc + "\"")
+    }
+  }
+}
+. = { "message": line }
 '''
 
 [sinks.siem_ingest]

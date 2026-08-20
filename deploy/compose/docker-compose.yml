@@ -185,6 +185,10 @@ services:
       # instead, so the container refuses to start rather than dropping.
       SIEM_INGEST_URL: http://logproc:8100/ingest/v1/f5asm/${F5_FEED_ID-}
       SIEM_FEED_TOKEN: ${F5_FEED_TOKEN-}
+      # The BIG-IP appliance's UTC offset (e.g. "+0300"): its logs carry local
+      # time with no offset, and without this every F5 event lands hours in
+      # the future. +0000 leaves an already-UTC appliance untouched.
+      BIGIP_UTC_OFFSET: ${BIGIP_UTC_OFFSET:-+0000}
     ports:
       - "${F5_SYSLOG_BIND:-127.0.0.1}:${F5_SYSLOG_PORT:-5514}:5514"
     volumes:
