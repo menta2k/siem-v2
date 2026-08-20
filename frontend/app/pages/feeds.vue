@@ -5,6 +5,7 @@
 // keeps only a hash and can never show it again.
 const { headers } = useApi()
 const { can } = useAuth()
+const { dateTime } = usePrefs()
 const config = useRuntimeConfig()
 
 const PROVIDERS = ['cloudflare', 'datadome', 'f5asm', 'nginx']
@@ -155,7 +156,7 @@ async function copy(text: string, what: string) {
                     {{ copiedWhat === f.id ? 'Copied' : 'Copy URL' }}
                   </v-btn>
                 </td>
-                <td class="text-caption">{{ new Date(f.token_rotated_at).toLocaleString() }}</td>
+                <td class="text-caption">{{ dateTime(f.token_rotated_at) }}</td>
                 <td class="text-right text-no-wrap">
                   <v-btn size="x-small" variant="text" :disabled="busy" data-test="rotate" @click="rotateTarget = f">
                     Rotate token

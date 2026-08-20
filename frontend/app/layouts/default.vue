@@ -104,6 +104,7 @@ const title = computed(() => {
       <v-app-bar-nav-icon @click="drawer = !drawer" />
       <v-app-bar-title>{{ title }}</v-app-bar-title>
       <v-spacer />
+      <TimeFormatMenu />
       <CollectionHealthBanner compact />
     </v-app-bar>
 

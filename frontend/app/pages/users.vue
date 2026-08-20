@@ -4,6 +4,7 @@
 // Every control here is UX only — the server enforces manage_users per request.
 const { headers } = useApi()
 const { can, user: me } = useAuth()
+const { dateTime } = usePrefs()
 const config = useRuntimeConfig()
 
 const ROLES = ['analyst', 'engineer', 'admin']
@@ -44,7 +45,7 @@ async function invite(email: string, role: string) {
     inviteResult.value = {
       email,
       url: `${window.location.origin}/invite?token=${encodeURIComponent(res.invite_token)}`,
-      expires: new Date(res.expires_at).toLocaleString(),
+      expires: dateTime(res.expires_at),
     }
     copied.value = false
     inviteEmail.value = ''
@@ -89,7 +90,7 @@ async function copyLink() {
 }
 
 function lastLogin(u: any) {
-  return u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never'
+  return dateTime(u.last_login_at, 'Never')
 }
 </script>
 

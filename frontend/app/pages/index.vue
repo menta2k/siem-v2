@@ -21,6 +21,7 @@ if (Number.isFinite(asnParam) && asnParam > 0) filters.value.asn = asnParam
 
 // The drawer keeps the result set underneath, so working a list stays a list.
 const { flowId: selectedFlowId, show: openFlow } = useFlowDrawer()
+const { dateTime } = usePrefs()
 
 async function run(resetPage = true) {
   if (resetPage) page.value = 0
@@ -47,11 +48,8 @@ function goto(delta: number) {
   run(false)
 }
 
-function eventTime(iso: string | undefined) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString()
-}
+// Rendered in the USER'S chosen zone (usePrefs); the stored instant is UTC.
+const eventTime = (iso: string | undefined) => dateTime(iso)
 
 onMounted(() => run())
 watch(identity, () => run())
