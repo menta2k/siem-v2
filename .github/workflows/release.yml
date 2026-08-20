@@ -100,11 +100,11 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          # Go cross-compiles and the Nuxt bundle is arch-independent, so arm64
-          # costs a second compile rather than an emulated toolchain — except
-          # the Rust sidecar, which would need QEMU; it ships amd64-only until
-          # that is worth the build time.
-          platforms: ${{ matrix.service == 'wirefilter-svc' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          # arm64 is built ONLY for version tags: branch pushes exist so a
+          # deployment can track main, and doubling every push's build time
+          # for an architecture nothing tracks from main is pure wait. The
+          # Rust sidecar stays amd64-only everywhere (arm64 would need QEMU).
+          platforms: ${{ (matrix.service == 'wirefilter-svc' || github.ref_type != 'tag') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
