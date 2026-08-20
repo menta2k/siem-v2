@@ -388,6 +388,32 @@ func (p *Pipeline) Restore(states []*window.State) {
 	p.Window.Restore(states)
 }
 
+// RecentKeys returns the merge index — correlation keys stored within the
+// merge horizon — for persistence. Without carrying this across restart, a
+// late straggler (Cloudflare Logpush arriving after the origin flow closed)
+// cannot find its partner and the flow stays split forever.
+func (p *Pipeline) RecentKeys() map[string]time.Time {
+	p.recentMu.Lock()
+	defer p.recentMu.Unlock()
+	out := make(map[string]time.Time, len(p.recentKeys))
+	for k, v := range p.recentKeys {
+		out[k] = v
+	}
+	return out
+}
+
+// RestoreRecentKeys reinstates the merge index on startup.
+func (p *Pipeline) RestoreRecentKeys(keys map[string]time.Time) {
+	p.recentMu.Lock()
+	defer p.recentMu.Unlock()
+	if p.recentKeys == nil {
+		p.recentKeys = map[string]time.Time{}
+	}
+	for k, v := range keys {
+		p.recentKeys[k] = v
+	}
+}
+
 // RawItem is one original record queued for raw storage.
 type RawItem struct {
 	ID      string

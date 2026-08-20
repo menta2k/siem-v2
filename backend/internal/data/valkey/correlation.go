@@ -4,10 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/menta2k/siem-v2/backend/internal/correlate/window"
 	valkeygo "github.com/valkey-io/valkey-go"
 )
+
+// Snapshot is the full correlation state persisted across restart: the
+// in-flight window plus the merge index that reunites late stragglers with
+// their already-stored partners.
+type Snapshot struct {
+	Window     []*window.State      `json:"window"`
+	RecentKeys map[string]time.Time `json:"recent_keys"`
+}
 
 // CorrelationState persists the in-flight correlation window across restarts.
 //
@@ -26,10 +35,10 @@ func NewCorrelationState(client valkeygo.Client) *CorrelationState {
 // Save writes the whole in-flight snapshot as one value. The window is bounded
 // by the late-arrival horizon, so this stays small — thousands of states, not
 // millions.
-func (c *CorrelationState) Save(ctx context.Context, states []*window.State) error {
-	payload, err := json.Marshal(states)
+func (c *CorrelationState) Save(ctx context.Context, snap Snapshot) error {
+	payload, err := json.Marshal(snap)
 	if err != nil {
-		return fmt.Errorf("encode correlation window: %w", err)
+		return fmt.Errorf("encode correlation snapshot: %w", err)
 	}
 	cmd := c.client.B().Set().Key(c.key).Value(string(payload)).Build()
 	if err := c.client.Do(ctx, cmd).Error(); err != nil {
@@ -38,20 +47,20 @@ func (c *CorrelationState) Save(ctx context.Context, states []*window.State) err
 	return nil
 }
 
-// Load reads the snapshot; a missing key returns nil, nil (first boot).
-func (c *CorrelationState) Load(ctx context.Context) ([]*window.State, error) {
+// Load reads the snapshot; a missing key returns an empty snapshot (first boot).
+func (c *CorrelationState) Load(ctx context.Context) (Snapshot, error) {
 	raw, err := c.client.Do(ctx, c.client.B().Get().Key(c.key).Build()).ToString()
 	if err != nil {
 		if valkeygo.IsValkeyNil(err) {
-			return nil, nil
+			return Snapshot{}, nil
 		}
-		return nil, fmt.Errorf("load correlation window: %w", err)
+		return Snapshot{}, fmt.Errorf("load correlation snapshot: %w", err)
 	}
-	var states []*window.State
-	if err := json.Unmarshal([]byte(raw), &states); err != nil {
-		return nil, fmt.Errorf("decode correlation window: %w", err)
+	var snap Snapshot
+	if err := json.Unmarshal([]byte(raw), &snap); err != nil {
+		return Snapshot{}, fmt.Errorf("decode correlation snapshot: %w", err)
 	}
-	return states, nil
+	return snap, nil
 }
 
 // Clear removes the snapshot after a successful restore, so a later crash

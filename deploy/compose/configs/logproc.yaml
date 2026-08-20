@@ -41,7 +41,7 @@ correlate:
   # that in production. 5m covers Logpush's maximum upload interval plus
   # processing headroom; the spec's assumption allows up to 15m if memory
   # permits.
-  late_arrival_window: 5m
+  late_arrival_window: 10m
   heuristic_window: 5s
 
 evaluation:

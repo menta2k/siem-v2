@@ -94,12 +94,14 @@ func run(confPath string, logger *slog.Logger) error {
 	// (lose the in-flight window on restart) rather than blocking startup.
 	corrState := buildCorrelationState(cfg, logger)
 	if corrState != nil {
-		if states, err := corrState.Load(ctx); err != nil {
-			logger.Warn("could not load correlation window; starting empty", "error", err)
-		} else if len(states) > 0 {
-			pipeline.Restore(states)
+		if snap, err := corrState.Load(ctx); err != nil {
+			logger.Warn("could not load correlation snapshot; starting empty", "error", err)
+		} else if len(snap.Window) > 0 || len(snap.RecentKeys) > 0 {
+			pipeline.Restore(snap.Window)
+			pipeline.RestoreRecentKeys(snap.RecentKeys)
 			_ = corrState.Clear(ctx) // consumed; a later crash must not replay it
-			logger.Info("restored in-flight correlation window", "states", len(states))
+			logger.Info("restored correlation state",
+				"window", len(snap.Window), "recent_keys", len(snap.RecentKeys))
 		}
 	}
 
@@ -152,11 +154,15 @@ func run(confPath string, logger *slog.Logger) error {
 	}
 	// Persist whatever remains open so the next boot resumes it (FR-023).
 	if corrState != nil {
-		states := pipeline.Snapshot()
-		if err := corrState.Save(shutdownCtx, states); err != nil {
-			logger.Warn("could not persist correlation window", "error", err)
+		snap := datavalkey.Snapshot{
+			Window:     pipeline.Snapshot(),
+			RecentKeys: pipeline.RecentKeys(),
+		}
+		if err := corrState.Save(shutdownCtx, snap); err != nil {
+			logger.Warn("could not persist correlation state", "error", err)
 		} else {
-			logger.Info("persisted in-flight correlation window", "states", len(states))
+			logger.Info("persisted correlation state",
+				"window", len(snap.Window), "recent_keys", len(snap.RecentKeys))
 		}
 	}
 	return srv.Shutdown(shutdownCtx)

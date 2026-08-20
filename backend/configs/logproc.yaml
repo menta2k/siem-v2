@@ -32,7 +32,7 @@ ingest:
   pull_interval: 60s
 
 correlate:
-  late_arrival_window: 60s
+  late_arrival_window: 10m
   heuristic_window: 5s
 
 evaluation:
