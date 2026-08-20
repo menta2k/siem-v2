@@ -99,9 +99,11 @@ func run(confPath string, logger *slog.Logger) error {
 		} else if len(snap.Window) > 0 || len(snap.RecentKeys) > 0 {
 			pipeline.Restore(snap.Window)
 			pipeline.RestoreRecentKeys(snap.RecentKeys)
+			pipeline.RestoreIdentifierIndex(snap.IDIndex, snap.KeyIDs)
 			_ = corrState.Clear(ctx) // consumed; a later crash must not replay it
 			logger.Info("restored correlation state",
-				"window", len(snap.Window), "recent_keys", len(snap.RecentKeys))
+				"window", len(snap.Window), "recent_keys", len(snap.RecentKeys),
+				"id_index", len(snap.IDIndex))
 		}
 	}
 
@@ -154,9 +156,12 @@ func run(confPath string, logger *slog.Logger) error {
 	}
 	// Persist whatever remains open so the next boot resumes it (FR-023).
 	if corrState != nil {
+		idx, rev := pipeline.IdentifierIndex()
 		snap := datavalkey.Snapshot{
 			Window:     pipeline.Snapshot(),
 			RecentKeys: pipeline.RecentKeys(),
+			IDIndex:    idx,
+			KeyIDs:     rev,
 		}
 		if err := corrState.Save(shutdownCtx, snap); err != nil {
 			logger.Warn("could not persist correlation state", "error", err)

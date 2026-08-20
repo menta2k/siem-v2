@@ -90,6 +90,14 @@ type Pipeline struct {
 	// that a flow depended on the Cloudflare custom-field capture is lost by the
 	// time the flow is materialized.
 	bridged map[string]bool
+	// idIndex maps each seen identifier to the window key it belongs to, so a
+	// record arriving in ANY later cycle attaches to the right existing window
+	// — the union-find within a single 5s Correlate batch could never link the
+	// Cloudflare bridge row (minutes late) to the real-time origin records.
+	idIndex map[string]string
+	// keyIDs is the reverse: a window key's identifiers, so closing a window
+	// prunes them from idIndex.
+	keyIDs map[string]map[string]bool
 }
 
 func NewPipeline(store Store, dl ingest.DeadLetter, w *window.Window) *Pipeline {
@@ -101,6 +109,8 @@ func NewPipeline(store Store, dl ingest.DeadLetter, w *window.Window) *Pipeline 
 		Now:        func() time.Time { return time.Now().UTC() },
 		events:     map[string]schema.Event{},
 		bridged:    map[string]bool{},
+		idIndex:    map[string]string{},
+		keyIDs:     map[string]map[string]bool{},
 	}
 }
 
@@ -207,21 +217,95 @@ func (p *Pipeline) Correlate() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.Now()
-	for _, component := range group.Exact(p.records) {
-		if component.Bridged {
-			p.bridged[component.Key.Value] = true
+	for _, r := range p.records {
+		if len(r.Identifiers) == 0 {
+			continue
 		}
-		for _, id := range component.EventIDs {
-			e, ok := p.events[id]
-			if !ok {
-				continue
+		e, ok := p.events[r.EventID]
+		if !ok {
+			continue
+		}
+		idStrs := make([]string, 0, len(r.Identifiers))
+		for _, id := range r.Identifiers {
+			idStrs = append(idStrs, id.String())
+		}
+
+		// Which existing windows do this record's identifiers already belong to?
+		existing := map[string]bool{}
+		for _, s := range idStrs {
+			if k, ok := p.idIndex[s]; ok {
+				existing[k] = true
 			}
-			p.Window.Add(component.Key.Value, e.Tenant, e, now)
+		}
+
+		var key string
+		switch len(existing) {
+		case 0:
+			// New request: canonical key over this record's own identifiers.
+			if canonical, ok := keys.Canonical(r.Identifiers); ok {
+				key = canonical
+			} else {
+				key = idStrs[0]
+			}
+		case 1:
+			for k := range existing {
+				key = k
+			}
+		default:
+			// The record bridges windows that were separate until now (the
+			// late Cloudflare origin-fetch row sharing the origin ray while
+			// also carrying the parent). Merge them all into one.
+			key = canonicalOf(existing)
+			for k := range existing {
+				if k == key {
+					continue
+				}
+				p.Window.Merge(key, k)
+				p.mergeKeyState(key, k)
+			}
+		}
+
+		if len(idStrs) > 1 || len(existing) > 1 {
+			p.bridged[key] = true
+		}
+		p.Window.Add(key, e.Tenant, e, now)
+		if p.keyIDs[key] == nil {
+			p.keyIDs[key] = map[string]bool{}
+		}
+		for _, s := range idStrs {
+			p.idIndex[s] = key
+			p.keyIDs[key][s] = true
 		}
 	}
-	// Accumulated records have been handed to the window; clearing here keeps
-	// memory bounded per cycle rather than growing for the process lifetime.
 	p.records = p.records[:0]
+}
+
+// canonicalOf picks a deterministic key from a set of existing keys, so a merge
+// is reproducible regardless of record arrival order.
+func canonicalOf(keySet map[string]bool) string {
+	chosen := ""
+	for k := range keySet {
+		if chosen == "" || k < chosen {
+			chosen = k
+		}
+	}
+	return chosen
+}
+
+// mergeKeyState moves src's identifier ownership and bridged flag onto dst.
+func (p *Pipeline) mergeKeyState(dst, src string) {
+	if p.keyIDs[dst] == nil {
+		p.keyIDs[dst] = map[string]bool{}
+	}
+	for s := range p.keyIDs[src] {
+		p.idIndex[s] = dst
+		p.keyIDs[dst][s] = true
+	}
+	delete(p.keyIDs, src)
+	if p.bridged[src] {
+		p.bridged[dst] = true
+	}
+	delete(p.bridged, src)
 }
 
 // Flush materializes and stores every flow whose window has closed.
@@ -256,6 +340,13 @@ func (p *Pipeline) Flush(ctx context.Context) (int, error) {
 			delete(p.events, id)
 		}
 		delete(p.bridged, state.CorrelationKey)
+		// The window is gone; drop its identifiers from the index so it does
+		// not grow without bound. A record that arrives for this key AFTER the
+		// close is handled by the storage-layer straggler merge, not the index.
+		for s := range p.keyIDs[state.CorrelationKey] {
+			delete(p.idIndex, s)
+		}
+		delete(p.keyIDs, state.CorrelationKey)
 	}
 	p.mu.Unlock()
 
@@ -411,6 +502,49 @@ func (p *Pipeline) RestoreRecentKeys(keys map[string]time.Time) {
 	}
 	for k, v := range keys {
 		p.recentKeys[k] = v
+	}
+}
+
+// IdentifierIndex returns the identifier->key map and its reverse for
+// persistence, so a late bridge still attaches to its window after a restart.
+func (p *Pipeline) IdentifierIndex() (map[string]string, map[string][]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	idx := make(map[string]string, len(p.idIndex))
+	for k, v := range p.idIndex {
+		idx[k] = v
+	}
+	rev := make(map[string][]string, len(p.keyIDs))
+	for k, set := range p.keyIDs {
+		ids := make([]string, 0, len(set))
+		for s := range set {
+			ids = append(ids, s)
+		}
+		rev[k] = ids
+	}
+	return idx, rev
+}
+
+// RestoreIdentifierIndex reinstates the identifier index on startup.
+func (p *Pipeline) RestoreIdentifierIndex(idx map[string]string, rev map[string][]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.idIndex == nil {
+		p.idIndex = map[string]string{}
+	}
+	for k, v := range idx {
+		p.idIndex[k] = v
+	}
+	if p.keyIDs == nil {
+		p.keyIDs = map[string]map[string]bool{}
+	}
+	for k, ids := range rev {
+		if p.keyIDs[k] == nil {
+			p.keyIDs[k] = map[string]bool{}
+		}
+		for _, s := range ids {
+			p.keyIDs[k][s] = true
+		}
 	}
 }
 

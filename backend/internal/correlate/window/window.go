@@ -134,6 +134,48 @@ func (w *Window) Get(key string) (*State, bool) {
 	return st, ok
 }
 
+// Merge folds the src flow's events into dst and removes src. Used when a late
+// bridging record reveals that two separately-keyed windows are actually the
+// same request (the Cloudflare origin-fetch row shares the origin ray but is
+// canonically keyed on the parent). Returns dst's state.
+func (w *Window) Merge(dst, src string) *State {
+	from, ok := w.states[src]
+	if !ok || src == dst {
+		return w.states[dst]
+	}
+	into, ok := w.states[dst]
+	if !ok {
+		// dst does not exist yet: re-key src as dst rather than copy.
+		from.CorrelationKey = dst
+		w.states[dst] = from
+		delete(w.states, src)
+		return from
+	}
+	for _, e := range from.Events {
+		dup := false
+		for _, x := range into.Events {
+			if x.EventID == e.EventID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			into.Events = append(into.Events, e)
+		}
+	}
+	if from.FirstArrival.Before(into.FirstArrival) {
+		into.FirstArrival = from.FirstArrival
+	}
+	if from.LastArrival.After(into.LastArrival) {
+		into.LastArrival = from.LastArrival
+	}
+	if into.Closed {
+		into.Amended = true
+	}
+	delete(w.states, src)
+	return into
+}
+
 // Restore reinstates in-flight state after a restart. Correlation state is
 // persisted precisely so a restart resumes rather than discarding partial flows
 // (FR-023).

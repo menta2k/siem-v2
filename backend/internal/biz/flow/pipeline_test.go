@@ -163,3 +163,36 @@ func TestSnapshotRestoreResumesOpenFlows(t *testing.T) {
 		t.Fatalf("restored window must carry the open flow, in-flight=%d", p2.InFlight())
 	}
 }
+
+// TestCrossCycleBridgeJoinsOriginAndEdge: the real production failure. Origin
+// records (F5+nginx) carry the origin ray and arrive first; minutes later the
+// Cloudflare origin-fetch row arrives carrying BOTH the origin ray and the
+// parent ray, canonically keyed on the parent. They must end up in ONE flow.
+func TestCrossCycleBridgeJoinsOriginAndEdge(t *testing.T) {
+	store := &mergeStore{byID: map[string]*Flow{}}
+	w := window.New(window.Options{LateArrival: time.Hour, ExpectedLayers: 4})
+	p := NewPipeline(store, &ingest.MemoryDeadLetter{}, w)
+	p.Register(nginx.New())
+	p.Register(cloudflare.New())
+
+	originRay := "a2dfaa0e7ba969dd"
+	parentRay := "a2dfaa0e2a624138" // lexically smaller -> canonical would pick it
+
+	// Cycle 1: origin (nginx) sees only the origin ray.
+	ng := `{"time_iso8601":"2026-08-20T10:00:00+03:00","cf_ray":"` + originRay + `-SOF","request_uri":"/x","request_method":"GET","status":200,"host":"www.jobs.bg","remote_addr":"1.2.3.4"}`
+	if err := p.ProcessBatch(t.Context(), ingest.RawBatch{Provider: schema.ProviderNginx, Tenant: "acme", SourceID: "n", Records: [][]byte{[]byte(ng)}}); err != nil {
+		t.Fatal(err)
+	}
+	p.Correlate()
+
+	// Cycle 2 (minutes later): the CF origin-fetch row bridges origin<->parent.
+	cf := `{"RayID":"` + originRay + `","ParentRayID":"` + parentRay + `","EdgeStartTimestamp":"2026-08-20T07:00:00Z","ClientIP":"5.6.7.8","ClientRequestHost":"www.jobs.bg","ClientRequestURI":"/x","ClientRequestMethod":"GET","EdgeResponseStatus":200}`
+	if err := p.ProcessBatch(t.Context(), ingest.RawBatch{Provider: schema.ProviderCloudflare, Tenant: "acme", SourceID: "c", Records: [][]byte{[]byte(cf)}}); err != nil {
+		t.Fatal(err)
+	}
+	p.Correlate()
+
+	if got := p.InFlight(); got != 1 {
+		t.Fatalf("origin and edge must collapse into ONE in-flight flow, got %d", got)
+	}
+}

@@ -16,6 +16,11 @@ import (
 type Snapshot struct {
 	Window     []*window.State      `json:"window"`
 	RecentKeys map[string]time.Time `json:"recent_keys"`
+	// IDIndex is the identifier->key map that lets a late bridge attach to the
+	// right in-flight window; without persisting it, a restart re-splits every
+	// flow whose bridge had not yet arrived.
+	IDIndex map[string]string   `json:"id_index"`
+	KeyIDs  map[string][]string `json:"key_ids"`
 }
 
 // CorrelationState persists the in-flight correlation window across restarts.
