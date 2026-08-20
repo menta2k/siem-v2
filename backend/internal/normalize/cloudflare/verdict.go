@@ -21,12 +21,21 @@ var actionMap = map[string]schema.Action{
 	"drop":                   schema.ActionBlocked,
 	"challenge":              schema.ActionChallenged,
 	"managed_challenge":      schema.ActionChallenged,
+	"managedchallenge":       schema.ActionChallenged,
 	"jschallenge":            schema.ActionChallenged,
 	"js_challenge":           schema.ActionChallenged,
 	"connection_close":       schema.ActionBlocked,
+	"connectionclose":        schema.ActionBlocked,
 	"force_connection_close": schema.ActionBlocked,
+	"forceconnectionclose":   schema.ActionBlocked,
 	"rate_limit":             schema.ActionRateLimited,
 }
+
+// Cloudflare's current ruleset writes SecurityAction in camelCase
+// (managedChallenge, connectionClose, forceConnectionClose). Lookups lowercase
+// the value, so the concatenated forms above sit alongside the snake_case ones
+// the legacy docs used. Without them a managed challenge — the single most
+// common security action on this traffic — fell through to "unknown".
 
 // legacyWAFAction maps the older numeric WAFAction enum.
 var legacyWAFAction = map[int]schema.Action{

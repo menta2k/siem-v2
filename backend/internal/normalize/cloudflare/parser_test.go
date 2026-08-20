@@ -193,3 +193,36 @@ func TestMalformedJSONIsRejected(t *testing.T) {
 		t.Fatal("malformed JSON must produce a parse error, not a partial event")
 	}
 }
+
+// TestCamelCaseSecurityActionsMap covers the form Cloudflare's current ruleset
+// actually emits (managedChallenge, connectionClose), which lowercases to a
+// concatenated token the snake_case-only table used to miss — sending the single
+// most common security action, a managed challenge, to "unknown".
+func TestCamelCaseSecurityActionsMap(t *testing.T) {
+	cases := []struct {
+		action string
+		want   schema.Action
+	}{
+		{"managedChallenge", schema.ActionChallenged},
+		{"jsChallenge", schema.ActionChallenged},
+		{"connectionClose", schema.ActionBlocked},
+		{"forceConnectionClose", schema.ActionBlocked},
+	}
+	for _, c := range cases {
+		line := []byte(`{"RayID":"a2e1279f0d9a52f4","ParentRayID":"00",` +
+			`"EdgeStartTimestamp":"2026-08-20T11:45:57Z","ClientIP":"1.2.3.4",` +
+			`"ClientRequestHost":"www.jobs.bg","ClientRequestURI":"/.env",` +
+			`"ClientRequestMethod":"GET","EdgeResponseStatus":403,` +
+			`"SecurityAction":"` + c.action + `"}`)
+		e, err := New().Parse(line, receivedAt)
+		if err != nil {
+			t.Fatalf("parse %s: %v", c.action, err)
+		}
+		if e.Verdict.Action != c.want {
+			t.Errorf("%s: want %q, got %q", c.action, c.want, e.Verdict.Action)
+		}
+		if !e.Verdict.Mapped {
+			t.Errorf("%s: should be mapped, not surfaced as unknown", c.action)
+		}
+	}
+}
