@@ -119,3 +119,22 @@ func TestConcurrentAccessIsSafe(t *testing.T) {
 		<-done
 	}
 }
+
+// TestReRegisteringKeepsTheHistory: the feed ingest path registers its source
+// on EVERY accepted delivery. If registration wipes LastRecordAt, a source's
+// silence clock resets on the very event that should feed it.
+func TestReRegisteringKeepsTheHistory(t *testing.T) {
+	r := NewRegistry()
+	r.RegisterSource("feed-1", "nginx", 15*time.Minute)
+	r.RecordDelivery("feed-1", 10, time.Now().Add(-time.Hour))
+
+	r.RegisterSource("feed-1", "nginx", 15*time.Minute) // next delivery's hook
+
+	silent := r.EvaluateSilence(time.Now())
+	if len(silent) != 1 || silent[0].SourceID != "feed-1" {
+		t.Fatalf("an hour-silent source must be reported even after re-registration, got %v", silent)
+	}
+	if r.Overall() != StateDegraded {
+		t.Fatal("a silent source must degrade overall health")
+	}
+}

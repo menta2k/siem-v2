@@ -100,6 +100,7 @@ func run(confPath string, logger *slog.Logger) error {
 
 	go consume(ctx, buffer, pipeline, health, logger)
 	go flushLoop(ctx, pipeline, logger)
+	go silenceLoop(ctx, health, logger)
 
 	<-ctx.Done()
 	logger.Info("shutting down")
@@ -286,6 +287,40 @@ func flushLoop(ctx context.Context, pipeline *flow.Pipeline, logger *slog.Logger
 			if n > 0 {
 				logger.Info("flows stored", "count", n, "in_flight", pipeline.InFlight())
 			}
+		}
+	}
+}
+
+// silenceLoop is what turns a quiet vendor into a visible condition. The
+// registry's EvaluateSilence marks sources whose cadence has lapsed — but
+// marking only happens when someone asks, and until this loop existed nobody
+// did in production: /health reported "healthy" through hours of silence
+// because the evaluation only ever ran inside a test.
+func silenceLoop(ctx context.Context, health *observability.Registry, logger *slog.Logger) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	wasSilent := map[string]bool{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			silent := map[string]bool{}
+			for _, s := range health.EvaluateSilence(now) {
+				silent[s.SourceID] = true
+				if !wasSilent[s.SourceID] {
+					logger.Warn("source went silent",
+						"source", s.SourceID, "provider", s.Provider,
+						"last_record_at", s.LastRecordAt,
+						"expected_cadence", s.ExpectedCadence.String())
+				}
+			}
+			for id := range wasSilent {
+				if !silent[id] {
+					logger.Info("source recovered from silence", "source", id)
+				}
+			}
+			wasSilent = silent
 		}
 	}
 }

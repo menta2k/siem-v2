@@ -76,6 +76,14 @@ func NewRegistry() *Registry {
 func (r *Registry) RegisterSource(sourceID, provider string, cadence time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Idempotent on purpose: the feed ingest path registers on every accepted
+	// delivery, and re-registration must never reset the silence clock — that
+	// would wipe LastRecordAt on the very event that should feed it.
+	if s, ok := r.sources[sourceID]; ok {
+		s.Provider = provider
+		s.ExpectedCadence = cadence
+		return
+	}
 	r.sources[sourceID] = &SourceHealth{
 		SourceID: sourceID, Provider: provider,
 		ExpectedCadence: cadence, State: StateAwaiting,
