@@ -702,7 +702,6 @@ func (s *apiServer) verdictStats(w http.ResponseWriter, r *http.Request) {
 	byOutcome := map[string]int{}
 	byLayer := map[string]int{}
 	byCompleteness := map[string]int{}
-	byProvider := map[string]int{}
 	bridged, heuristic := 0, 0
 
 	for _, f := range flows {
@@ -717,9 +716,15 @@ func (s *apiServer) verdictStats(w http.ResponseWriter, r *http.Request) {
 		if string(f.Method) == "heuristic" {
 			heuristic++
 		}
-		for _, e := range f.Events {
-			byProvider[string(e.Provider)]++
-		}
+	}
+
+	// Records per provider is the TRUE event count over the window, not a
+	// derived count from the flow sample above — a 1000-flow slice of millions
+	// badly under-represented Cloudflare, which is present in nearly every
+	// request. A query error here degrades this one panel, not the dashboard.
+	byProvider, err := s.repo.ProviderEventCounts(r.Context(), tenantOf(r), now.Add(-24*time.Hour), now)
+	if err != nil {
+		byProvider = map[string]int{}
 	}
 
 	exactRatio := 1.0

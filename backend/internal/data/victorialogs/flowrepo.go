@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,34 @@ func (r *FlowRepo) StoreRaw(ctx context.Context, tenant string, provider schema.
 		})
 	}
 	return r.client.Insert(ctx, r.tenant, docs)
+}
+
+// ProviderEventCounts returns the TRUE per-provider event count over a window
+// via a direct stats query — not a flow sample. The dashboard's old
+// sample-and-count under-represented whichever provider is spread thinly
+// across many flows (Cloudflare: present in nearly every request, yet a
+// 1000-flow slice of millions barely showed it).
+func (r *FlowRepo) ProviderEventCounts(ctx context.Context, tenant string, from, to time.Time) (map[string]int, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return nil, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[%s, %s] | stats by (provider) count() n`,
+		quote(tenant), quote(string(KindEvent)),
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int{}
+	for _, row := range rows {
+		provider, _ := row["provider"].(string)
+		if provider == "" {
+			continue
+		}
+		n, _ := strconv.Atoi(fmt.Sprint(row["n"]))
+		out[provider] = n
+	}
+	return out, nil
 }
 
 // Get fetches one flow by id, scoped to the tenant.
