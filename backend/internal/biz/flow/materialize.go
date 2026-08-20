@@ -57,13 +57,20 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 		Bridged:        opts.Bridged,
 	}
 
+	f.FirstSeen, f.LastSeen = timeSpan(ordered)
+	f.EffectiveOutcome, f.TerminatingLayer = resolveOutcome(ordered)
+
+	// Coverage is judged only up to the TERMINATING layer: a request blocked at
+	// the edge legitimately never reached the origin, so the origin's absence
+	// is not a gap. Missing a layer ABOVE the termination point is a real gap —
+	// a layer that should have reported did not (the design's meaning of
+	// "partial"). A flow that passed all the way through expects every layer.
 	expected := opts.ExpectedLayers
 	if len(expected) == 0 {
 		expected = expectedLayers
 	}
+	expected = expectedUpTo(expected, f.TerminatingLayer)
 	f.LayersPresent, f.LayersMissing = layerCoverage(ordered, expected)
-	f.FirstSeen, f.LastSeen = timeSpan(ordered)
-	f.EffectiveOutcome, f.TerminatingLayer = resolveOutcome(ordered)
 	f.TimingAttribution = timingAttribution(ordered)
 	f.Client, f.Request = denormalize(ordered)
 	f.Completeness = completeness(f, opts.Closed)
@@ -79,6 +86,26 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 }
 
 // layerCoverage reports which expected layers reported and which did not.
+// expectedUpTo trims the expected layer set to those at or above the
+// terminating layer in causal order. An empty terminating layer (the request
+// passed through without any layer terminating it) expects the full set.
+func expectedUpTo(expected []schema.Layer, terminating schema.Layer) []schema.Layer {
+	if terminating == "" {
+		return expected
+	}
+	limit, ok := terminating.Order()
+	if !ok {
+		return expected
+	}
+	out := make([]schema.Layer, 0, len(expected))
+	for _, l := range expected {
+		if o, ok := l.Order(); ok && o <= limit {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 func layerCoverage(events []schema.Event, expected []schema.Layer) (present, missing []schema.Layer) {
 	seen := map[schema.Layer]bool{}
 	for _, e := range events {

@@ -411,3 +411,33 @@ func TestPipelineSurvivesConcurrentIngestAndFlush(t *testing.T) {
 	<-done
 	<-done
 }
+
+// TestCompletenessRelativeToTermination: a request blocked at the edge never
+// reaches the origin, so an edge-only flow is COMPLETE, not partial — the
+// origin's absence is not a gap. A flow that passed through and is missing a
+// mid-path layer is partial.
+func TestCompletenessRelativeToTermination(t *testing.T) {
+	at := time.Now().UTC()
+	edgeBlock := schema.Event{
+		EventID: "cf1", Provider: schema.ProviderCloudflare, Layer: schema.LayerEdge,
+		EventTime: at, Verdict: schema.Verdict{Action: "blocked", Terminating: true, Mapped: true},
+		Request: schema.Request{Host: "x", Path: "/"},
+	}
+	f := Materialize("ray:e1", []schema.Event{edgeBlock}, Options{
+		Tenant: "acme", Method: keys.TierExact, Closed: true, Now: at,
+	})
+	if f.Completeness != Complete {
+		t.Fatalf("an edge block is complete (origin never saw it); got %q missing=%v", f.Completeness, f.LayersMissing)
+	}
+
+	// Allowed through but only the edge reported: the origin SHOULD have and
+	// did not — that is a real gap.
+	edgeAllow := edgeBlock
+	edgeAllow.Verdict = schema.Verdict{Action: "allowed", Terminating: false, Mapped: true}
+	f2 := Materialize("ray:e2", []schema.Event{edgeAllow}, Options{
+		Tenant: "acme", Method: keys.TierExact, Closed: true, Now: at,
+	})
+	if f2.Completeness != Partial {
+		t.Fatalf("an allowed edge-only flow is missing the origin; want partial, got %q", f2.Completeness)
+	}
+}
