@@ -14,6 +14,16 @@ const draft = ref<FlowSearch>({ ...props.modelValue })
 
 watch(() => props.modelValue, (next) => { draft.value = { ...next } }, { deep: true })
 
+const timeRangeOptions = [
+  { title: 'Any time', value: '' },
+  { title: 'Last 15 minutes', value: '15m' },
+  { title: 'Last hour', value: '1h' },
+  { title: 'Last 24 hours', value: '24h' },
+  { title: 'Last 15 days', value: '15d' },
+  { title: 'Last 30 days', value: '30d' },
+  { title: 'Custom range…', value: 'custom' },
+]
+
 const providerOptions = [
   { title: 'Cloudflare (edge)', value: 'cloudflare' },
   { title: 'DataDome (bot)', value: 'datadome' },
@@ -90,6 +100,28 @@ function numberOrUndefined(value: string | number | null): number | undefined {
           this" to "what did the others see" — and it does not depend on any
           clock agreeing with any other.
         -->
+        <v-select
+          v-model="draft.time_preset"
+          :items="timeRangeOptions"
+          label="Time range"
+          density="compact"
+          class="mb-1"
+          data-test="time-range"
+        />
+        <template v-if="draft.time_preset === 'custom'">
+          <!-- Native pickers: entered in the BROWSER's zone (the input shows
+               its own zone-less local time), converted to UTC for the query. -->
+          <v-text-field
+            v-model="draft.from_local" type="datetime-local" label="From"
+            density="compact" class="mb-1" data-test="time-from"
+          />
+          <v-text-field
+            v-model="draft.to_local" type="datetime-local" label="To"
+            density="compact" class="mb-2" hint="Empty = now" persistent-hint
+            data-test="time-to"
+          />
+        </template>
+
         <v-text-field
           v-model="draft.ray_id"
           label="Ray ID"

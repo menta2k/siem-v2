@@ -51,6 +51,14 @@ export interface Flow {
 export interface FlowSearch {
   from?: string
   to?: string
+  /**
+   * UI-only fields, translated to from/to at SEARCH time and stripped before
+   * the request — a preset like "last 15 minutes" must mean 15 minutes before
+   * each run, not before the moment it was selected.
+   */
+  time_preset?: string
+  from_local?: string
+  to_local?: string
   client_ip?: string
   host?: string
   path_prefix?: string

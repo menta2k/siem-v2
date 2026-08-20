@@ -23,13 +23,43 @@ if (Number.isFinite(asnParam) && asnParam > 0) filters.value.asn = asnParam
 const { flowId: selectedFlowId, show: openFlow } = useFlowDrawer()
 const { dateTime } = usePrefs()
 
+/**
+ * Presets resolve at SEARCH time: "last 15 minutes" means the 15 minutes
+ * before this run (Refresh included), never before the moment the preset was
+ * picked. Custom values come from the browser-local datetime pickers.
+ */
+const PRESET_MS: Record<string, number> = {
+  '15m': 15 * 60_000,
+  '1h': 60 * 60_000,
+  '24h': 24 * 3_600_000,
+  '15d': 15 * 86_400_000,
+  '30d': 30 * 86_400_000,
+}
+
+function timeWindow(f: FlowSearch): { from?: string, to?: string } {
+  if (f.time_preset && PRESET_MS[f.time_preset]) {
+    const now = Date.now()
+    return { from: new Date(now - PRESET_MS[f.time_preset]).toISOString(), to: new Date(now).toISOString() }
+  }
+  if (f.time_preset === 'custom' && (f.from_local || f.to_local)) {
+    // The backend applies the window only when BOTH ends exist.
+    const from = f.from_local ? new Date(f.from_local) : new Date(0)
+    const to = f.to_local ? new Date(f.to_local) : new Date()
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return {}
+    return { from: from.toISOString(), to: to.toISOString() }
+  }
+  return {}
+}
+
 async function run(resetPage = true) {
   if (resetPage) page.value = 0
   loading.value = true
   error.value = ''
   try {
+    const { time_preset, from_local, to_local, ...apiFilters } = filters.value
     const res = await searchFlows({
-      ...filters.value, limit: PAGE_SIZE, offset: page.value * PAGE_SIZE,
+      ...apiFilters, ...timeWindow(filters.value),
+      limit: PAGE_SIZE, offset: page.value * PAGE_SIZE,
     })
     flows.value = res.flows ?? []
     // A full page means there is PROBABLY more; the last page shows shorter.
