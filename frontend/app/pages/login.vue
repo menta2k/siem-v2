@@ -5,6 +5,15 @@ definePageMeta({ layout: 'bare' })
 
 const { login, verifyMfa, awaitingMfa, enrolling, provisioningUri, refresh } = useAuth()
 
+// Where to land after a successful sign-in: the page the guard bounced us from,
+// or the home page. Only same-origin app paths are honoured — never an
+// absolute URL an attacker could stuff into ?redirect= for an open redirect.
+const route = useRoute()
+const redirectTo = computed(() => {
+  const r = route.query.redirect
+  return typeof r === 'string' && r.startsWith('/') && !r.startsWith('//') ? r : '/'
+})
+
 const email = ref('')
 const password = ref('')
 const code = ref('')
@@ -14,7 +23,7 @@ const qrDataUrl = ref('')
 
 // A reload with a live refresh cookie signs straight back in.
 onMounted(async () => {
-  if (await refresh()) navigateTo('/')
+  if (await refresh()) navigateTo(redirectTo.value)
 })
 
 // The QR is rendered client-side from the provisioning URI — the secret never
@@ -29,7 +38,7 @@ async function submitPassword() {
   try {
     const complete = await login(email.value.trim(), password.value)
     if (complete) {
-      navigateTo('/')
+      navigateTo(redirectTo.value)
       return
     }
   } catch (e) {
@@ -44,7 +53,7 @@ async function submitCode() {
   error.value = ''
   try {
     await verifyMfa(code.value.trim())
-    navigateTo('/')
+    navigateTo(redirectTo.value)
   } catch (e) {
     error.value = toDisplayMessage(e, 'The code did not verify.')
     code.value = ''
