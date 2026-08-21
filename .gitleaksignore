@@ -1,0 +1,8 @@
+# Findings that are deliberate and safe, pinned by fingerprint so anything new
+# still fails the scan.
+#
+# A syntactically valid but fake JWT used by the profiler's secret-withholding
+# regression test (the test that PROVES such values are never stored). The
+# literal was replaced with runtime assembly in a later commit; this entry
+# covers the immutable commit that introduced it.
+e590ad32fcffdff2b229575aa8a73cf68375bec2:backend/internal/profile/profile_test.go:jwt:246
