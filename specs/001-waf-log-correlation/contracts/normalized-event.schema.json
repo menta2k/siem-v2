@@ -4,107 +4,398 @@
   "title": "Normalized Event",
   "description": "The common schema every provider record is mapped to (Constitution Principle II, FR-009). Additive changes only; field removal or type change is breaking and requires a migration plan plus re-parse or dual-write.",
   "type": "object",
-  "required": ["schema_version", "event_id", "raw_id", "tenant", "provider", "layer", "event_time", "received_at", "verdict"],
+  "required": [
+    "schema_version",
+    "event_id",
+    "raw_id",
+    "tenant",
+    "provider",
+    "layer",
+    "event_time",
+    "received_at",
+    "verdict"
+  ],
   "properties": {
-    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
-    "event_id": { "type": "string" },
-    "raw_id": { "type": "string", "description": "Deterministic; identical on redelivery (FR-007)" },
-    "tenant": { "type": "string" },
-    "provider": { "enum": ["cloudflare", "datadome", "f5asm", "nginx"] },
-    "dataset": { "type": "string" },
-    "parser_version": { "type": "string" },
-
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "raw_id": {
+      "type": "string",
+      "description": "Deterministic; identical on redelivery (FR-007)"
+    },
+    "tenant": {
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "cloudflare",
+        "datadome",
+        "f5asm",
+        "nginx"
+      ]
+    },
+    "dataset": {
+      "type": "string"
+    },
+    "parser_version": {
+      "type": "string"
+    },
     "identifiers": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "ALL per-request identifiers this record carries. Records are unioned transitively across shared identifiers, so a record carrying two ids bridges two identifier spaces (R11a, FR-072f)."
     },
-    "correlation_key": { "type": ["string", "null"], "description": "Canonical id of the record's identifier component. Regular field, never a stream field (R6)" },
-    "correlation_key_source": { "enum": ["ray_id", "vendor_request_id", "heuristic", "none"] },
-    "ray_id": { "type": ["string", "null"] },
-    "vendor_request_id": { "type": ["string", "null"], "description": "The provider's own per-request id, e.g. DataDome requestid" },
-
-    "event_time": { "type": "string", "format": "date-time", "description": "At the provider (FR-011)" },
-    "received_at": { "type": "string", "format": "date-time", "description": "When we received it (FR-011)" },
-    "clock_skew_ms": { "type": ["integer", "null"] },
-    "time_quality": { "enum": ["ok", "skewed", "implausible"], "default": "ok" },
-
-    "layer": { "enum": ["edge", "bot_management", "app_firewall", "origin"] },
-    "layer_order_hint": { "type": "integer", "description": "Causal position; ordering source of truth, not timestamps (FR-017)" },
-
+    "correlation_key": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Canonical id of the record's identifier component. Regular field, never a stream field (R6)"
+    },
+    "correlation_key_source": {
+      "enum": [
+        "ray_id",
+        "vendor_request_id",
+        "heuristic",
+        "none"
+      ]
+    },
+    "ray_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "vendor_request_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The provider's own per-request id, e.g. DataDome requestid"
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "At the provider (FR-011)"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When we received it (FR-011)"
+    },
+    "clock_skew_ms": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "time_quality": {
+      "enum": [
+        "ok",
+        "skewed",
+        "implausible"
+      ],
+      "default": "ok"
+    },
+    "layer": {
+      "enum": [
+        "edge",
+        "bot_management",
+        "app_firewall",
+        "origin"
+      ]
+    },
+    "layer_order_hint": {
+      "type": "integer",
+      "description": "Causal position; ordering source of truth, not timestamps (FR-017)"
+    },
     "client": {
       "type": "object",
       "properties": {
-        "ip": { "type": ["string", "null"] },
-        "asn": { "type": ["integer", "null"] },
-        "country": { "type": ["string", "null"] },
-        "user_agent": { "type": ["string", "null"] }
+        "ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "asn": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "country": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user_agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-
     "request": {
       "type": "object",
       "properties": {
-        "method": { "type": ["string", "null"] },
-        "host": { "type": ["string", "null"] },
-        "path": { "type": ["string", "null"] },
-        "query": { "type": ["string", "null"] },
-        "http_version": { "type": ["string", "null"] },
-        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-        "body_ref": { "type": ["string", "null"] },
-        "body_truncated": { "type": "boolean", "default": false, "description": "Drives FR-035 evaluation warning" }
+        "method": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "http_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "body_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "body_truncated": {
+          "type": "boolean",
+          "default": false,
+          "description": "Drives FR-035 evaluation warning"
+        }
       }
     },
-
     "response": {
       "type": "object",
       "properties": {
-        "status": { "type": ["integer", "null"] },
-        "bytes": { "type": ["integer", "null"] },
-        "duration_ms": { "type": ["number", "null"] }
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
       }
     },
-
     "verdict": {
       "type": "object",
-      "required": ["action", "mapped"],
+      "required": [
+        "action",
+        "mapped"
+      ],
       "properties": {
         "action": {
-          "enum": ["allowed", "logged", "rate_limited", "challenged", "challenge_passed", "challenge_failed", "blocked", "unknown"],
+          "enum": [
+            "allowed",
+            "logged",
+            "rate_limited",
+            "challenged",
+            "challenge_passed",
+            "challenge_failed",
+            "blocked",
+            "unknown"
+          ],
           "description": "FR-025"
         },
-        "terminating": { "type": "boolean", "default": false },
-        "rule_id": { "type": ["string", "null"] },
-        "rule_name": { "type": ["string", "null"] },
-        "rule_version": { "type": ["string", "null"] },
-        "category": { "type": ["string", "null"] },
-        "score": { "type": ["number", "null"] },
-        "threshold": { "type": ["number", "null"] },
-        "reason_raw": { "type": "object", "description": "Provider's unmodified decision content (FR-028)" },
-        "mapped": { "type": "boolean", "description": "False -> surfaced verbatim as unmapped (FR-014)" }
+        "terminating": {
+          "type": "boolean",
+          "default": false
+        },
+        "rule_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "threshold": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reason_raw": {
+          "type": "object",
+          "description": "Provider's unmodified decision content (FR-028)"
+        },
+        "mapped": {
+          "type": "boolean",
+          "description": "False -> surfaced verbatim as unmapped (FR-014)"
+        }
       }
     },
-
     "bot": {
       "type": "object",
       "description": "Cloudflare BotScore and DataDome X-DataDome-* enrichment, extracted from the CF record (R3)",
       "properties": {
-        "cf_bot_score": { "type": ["integer", "null"] },
-        "datadome_present": { "type": "boolean", "default": false },
-        "datadome_isbot": { "type": ["string", "null"] },
-        "datadome_botname": { "type": ["string", "null"] },
-        "datadome_ruletype": { "type": ["string", "null"] },
-        "datadome_score": { "type": ["number", "null"] },
-        "datadome_riskscore": { "type": ["number", "null"] },
-        "datadome_action": { "type": ["string", "null"], "description": "X-DataDome-Traffic-Rule-Response; plan-gated, off by default" }
+        "cf_bot_score": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "datadome_present": {
+          "type": "boolean",
+          "default": false
+        },
+        "datadome_isbot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datadome_botname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datadome_ruletype": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datadome_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "datadome_riskscore": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "datadome_action": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "X-DataDome-Traffic-Rule-Response; plan-gated, off by default"
+        }
       }
     },
-
+    "shape": {
+      "type": "object",
+      "description": "Pre-masking structural measurements (schema 1.1, additive). Absent field = not measured by the provider; never conflate with zero. Names only for cookies, never values.",
+      "properties": {
+        "request_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "header_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "header_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cookie_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cookie_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "data_quality_flags": {
       "type": "array",
-      "items": { "enum": ["clock_skew", "implausible_time", "body_truncated", "fields_masked", "unmapped_values", "heuristic_correlation", "bridged_correlation", "no_correlation_key", "datadome_fields_absent"] }
+      "items": {
+        "enum": [
+          "clock_skew",
+          "implausible_time",
+          "body_truncated",
+          "fields_masked",
+          "unmapped_values",
+          "heuristic_correlation",
+          "bridged_correlation",
+          "no_correlation_key",
+          "datadome_fields_absent"
+        ]
+      }
     },
-    "unmapped_fields": { "type": "object", "description": "Provider values we do not recognize, verbatim (FR-014)" },
-    "masked_fields": { "type": "array", "items": { "type": "string" }, "description": "Classified fields masked before storage (FR-015)" }
+    "unmapped_fields": {
+      "type": "object",
+      "description": "Provider values we do not recognize, verbatim (FR-014)"
+    },
+    "masked_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Classified fields masked before storage (FR-015)"
+    }
   }
 }

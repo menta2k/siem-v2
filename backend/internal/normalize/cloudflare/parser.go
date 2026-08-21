@@ -18,7 +18,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
 )
 
-const parserVersion = "cloudflare/1.0"
+const parserVersion = "cloudflare/1.1"
 
 // Parser normalizes Cloudflare Logpush records.
 type Parser struct{}
@@ -44,6 +44,7 @@ type record struct {
 	EdgeEndTimestamp   json.RawMessage `json:"EdgeEndTimestamp"`
 
 	ClientIP               string `json:"ClientIP"`
+	ClientRequestBytes     int64  `json:"ClientRequestBytes"`
 	ClientRequestHost      string `json:"ClientRequestHost"`
 	ClientRequestURI       string `json:"ClientRequestURI"`
 	ClientRequestMethod    string `json:"ClientRequestMethod"`
@@ -161,6 +162,16 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 		e.Response.DurationMS = float64(end.Sub(start).Microseconds()) / 1000.0
 	}
 
+	// Shape, computed BEFORE the masker ever sees the event. RequestBytes is
+	// Cloudflare's own total (headers included). Header counts are NOT set:
+	// RequestHeaders is the Logpush job's configured subset, and counting a
+	// subset as "the headers" would understate a ceiling while claiming to
+	// measure it. A captured Cookie header, though, is the real one.
+	if r.ClientRequestBytes > 0 {
+		e.Shape = &schema.Shape{RequestBytes: normalize.Int64Ptr(r.ClientRequestBytes)}
+	}
+	e.Shape = normalize.ShapeFromCookieHeader(e.Shape, cookieHeader(r.RequestHeaders))
+
 	e.Identifiers = identifiers(r)
 	e.CorrelationKeySource = schema.KeySourceRayID
 	e.Verdict = mapVerdict(r)
@@ -238,6 +249,17 @@ func headerLookup(r record, name string) string {
 
 // splitURI separates the path from the query string. Cloudflare's
 // ClientRequestURI includes both.
+// cookieHeader finds a captured Cookie header regardless of the case the
+// Logpush job used when configuring it.
+func cookieHeader(headers map[string]string) string {
+	for name, value := range headers {
+		if strings.EqualFold(name, "cookie") {
+			return value
+		}
+	}
+	return ""
+}
+
 func splitURI(uri string) (path, query string) {
 	if i := strings.IndexByte(uri, '?'); i >= 0 {
 		return uri[:i], uri[i+1:]

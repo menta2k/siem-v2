@@ -386,6 +386,60 @@ func TestTenantConfigValidation(t *testing.T) {
 	}
 }
 
+// TestShapeCeilingsAreMonotonicMaxima: measured shape facts ratchet upward;
+// an observation without them leaves the learned ceilings untouched rather
+// than resetting or zeroing them.
+func TestShapeCeilingsAreMonotonicMaxima(t *testing.T) {
+	a := newTestAggregator()
+
+	small := obs("f1", "/checkout", "")
+	rb1, hc1, cc1 := int64(900), 12, 2
+	small.RequestBytes, small.HeaderCount, small.CookieCount = &rb1, &hc1, &cc1
+	small.CookieNames = []string{"session"}
+	a.Observe(small)
+
+	big := obs("f2", "/checkout", "")
+	rb2, cc2 := int64(4200), 5
+	big.RequestBytes, big.CookieCount = &rb2, &cc2
+	big.CookieNames = []string{"session", "_ga"}
+	a.Observe(big)
+
+	a.Observe(obs("f3", "/checkout", "")) // no shape shipped at all
+
+	dirty, _ := a.Collect()
+	ep := dirty[0]
+	if ep.MaxRequestBytes == nil || *ep.MaxRequestBytes != 4200 {
+		t.Fatalf("max request bytes = %v, want 4200", ep.MaxRequestBytes)
+	}
+	if ep.MaxHeaderCount == nil || *ep.MaxHeaderCount != 12 {
+		t.Fatalf("max header count = %v, want 12 (kept from the earlier observation)", ep.MaxHeaderCount)
+	}
+	if ep.MaxCookieCount == nil || *ep.MaxCookieCount != 5 {
+		t.Fatalf("max cookie count = %v, want 5", ep.MaxCookieCount)
+	}
+	if len(ep.CookieNames) != 2 || !ep.CookieNames["session"] || !ep.CookieNames["_ga"] {
+		t.Fatalf("cookie names = %v", ep.CookieNames)
+	}
+	// HeaderBytes was never measured: it must be nil, not zero.
+	if ep.MaxHeaderBytes != nil {
+		t.Fatalf("header bytes was never shipped, must stay nil: %v", ep.MaxHeaderBytes)
+	}
+}
+
+func TestCookieNameCapSetsTruncated(t *testing.T) {
+	caps := DefaultCaps()
+	caps.CookieNames = 2
+	a := NewAggregator(caps, testOptions())
+	o := obs("f1", "/home", "")
+	o.CookieNames = []string{"a", "b", "c", "d"}
+	a.Observe(o)
+	dirty, _ := a.Collect()
+	if len(dirty[0].CookieNames) != 2 || !dirty[0].Truncated {
+		t.Fatalf("cap must hold names at 2 and mark truncated: %v truncated=%v",
+			dirty[0].CookieNames, dirty[0].Truncated)
+	}
+}
+
 func TestEndpointCapRefusesNewButKeepsLearning(t *testing.T) {
 	caps := DefaultCaps()
 	caps.EndpointsPerHost = 2

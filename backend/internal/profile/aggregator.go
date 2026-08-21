@@ -23,6 +23,16 @@ type Observation struct {
 	Status    int
 	Providers []string
 	Seen      time.Time
+
+	// Shape facts (schema 1.1), merged across the flow's events by the caller.
+	// nil = no event measured it; the ceiling stays honestly absent.
+	RequestBytes *int64
+	HeaderCount  *int
+	HeaderBytes  *int
+	CookieCount  *int
+	// CookieNames arrive only when the tenant opted into recording names;
+	// the caller strips them to a count otherwise.
+	CookieNames []string
 }
 
 // Stats are the aggregator's own health signals (Constitution IV): zero
@@ -195,6 +205,35 @@ func (a *Aggregator) observeEndpoint(ep *EndpointProfile, o Observation, norm []
 		ep.LastSeen = now
 	}
 	ep.MaxPathLen = maxInt(ep.MaxPathLen, len(o.Path))
+
+	// Measured shape ceilings. Each stays nil until some provider ships the
+	// fact — a measured zero and an absent measurement are different claims.
+	if o.RequestBytes != nil && (ep.MaxRequestBytes == nil || *o.RequestBytes > *ep.MaxRequestBytes) {
+		v := *o.RequestBytes
+		ep.MaxRequestBytes = &v
+	}
+	if o.HeaderCount != nil {
+		ep.MaxHeaderCount = maxInt(ep.MaxHeaderCount, *o.HeaderCount)
+	}
+	if o.HeaderBytes != nil {
+		ep.MaxHeaderBytes = maxInt(ep.MaxHeaderBytes, *o.HeaderBytes)
+	}
+	if o.CookieCount != nil {
+		ep.MaxCookieCount = maxInt(ep.MaxCookieCount, *o.CookieCount)
+	}
+	for _, name := range o.CookieNames {
+		if ep.CookieNames[name] {
+			continue
+		}
+		if len(ep.CookieNames) >= a.caps.CookieNames {
+			ep.Truncated = true
+			break
+		}
+		if ep.CookieNames == nil {
+			ep.CookieNames = map[string]bool{}
+		}
+		ep.CookieNames[name] = true
+	}
 
 	if o.Status > 0 {
 		key := strconv.Itoa(o.Status)

@@ -13,7 +13,10 @@ import "time"
 // Version is the schema version stamped on every event. Bump the minor version
 // for additive changes; a major bump means existing stored data no longer parses
 // with this package and needs migration.
-const Version = "1.0"
+//
+// 1.1: added the optional request Shape (structural facts captured before
+// masking, for the traffic profiler). Additive only.
+const Version = "1.1"
 
 // Provider identifies the system that produced a record.
 //
@@ -158,6 +161,9 @@ type Event struct {
 	Response Response `json:"response"`
 	Verdict  Verdict  `json:"verdict"`
 	Bot      *Bot     `json:"bot,omitempty"`
+	// Shape holds pre-masking structural measurements (schema 1.1); nil when
+	// the provider ships none of them.
+	Shape *Shape `json:"shape,omitempty"`
 
 	DataQualityFlags []QualityFlag  `json:"data_quality_flags,omitempty"`
 	UnmappedFields   map[string]any `json:"unmapped_fields,omitempty"`
@@ -180,6 +186,30 @@ type Request struct {
 	Headers       map[string]string `json:"headers,omitempty"`
 	BodyRef       string            `json:"body_ref,omitempty"`
 	BodyTruncated bool              `json:"body_truncated,omitempty"`
+}
+
+// Shape carries structural facts about a request, derived at NORMALIZATION —
+// before the masker runs — and safe to keep afterwards: counting a cookie is
+// not storing a cookie. These are integers and names, never values.
+//
+// Every field is a pointer because an absent measurement and a measured zero
+// are different claims (the FR-070 principle): nil means the provider never
+// shipped the fact. Each parser sets only what its provider genuinely
+// measures — a value that would be a lying floor (e.g. request bytes from a
+// truncated ASM capture) stays nil rather than understating a ceiling.
+type Shape struct {
+	// RequestBytes is the total size of the request including headers, as the
+	// provider measured it (Cloudflare ClientRequestBytes, nginx $request_length).
+	RequestBytes *int64 `json:"request_bytes,omitempty"`
+	// HeaderCount and HeaderBytes describe the FULL header block, so they are
+	// set only when the provider ships every header (F5 ASM's captured
+	// request), never from a configured subset like Logpush RequestHeaders.
+	HeaderCount *int `json:"header_count,omitempty"`
+	HeaderBytes *int `json:"header_bytes,omitempty"`
+	// CookieCount and CookieNames come from the Cookie request header. Names
+	// only — the value is split away before it can be recorded.
+	CookieCount *int     `json:"cookie_count,omitempty"`
+	CookieNames []string `json:"cookie_names,omitempty"`
 }
 
 type Response struct {

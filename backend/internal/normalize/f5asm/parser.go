@@ -20,7 +20,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
 )
 
-const parserVersion = "f5asm/1.0"
+const parserVersion = "f5asm/1.1"
 
 // kvRE matches key="value" pairs, allowing escaped quotes inside values.
 var kvRE = regexp.MustCompile(`(\w+)="((?:[^"\\]|\\.)*)"`)
@@ -104,6 +104,11 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 		e.LayerOrderHint = order
 	}
 
+	// Shape from the captured request text, BEFORE masking. ASM ships the
+	// full header block (unlike a configured Logpush subset), so its header
+	// count is a real measurement.
+	e.Shape = shapeFromRequest(fields["request"])
+
 	e.Identifiers = extractIdentifiers(fields, e)
 	e.Verdict = mapVerdict(fields)
 	if !e.Verdict.Mapped {
@@ -111,6 +116,48 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 	}
 	normalize.ApplyTimeQuality(e)
 	return e, nil
+}
+
+// shapeFromRequest measures the FULL header block of a captured request.
+// Total request bytes are deliberately NOT claimed: the capture truncates
+// bodies, and a lying floor understates exactly the ceiling the profiler
+// exists to learn — absent is honest, small is not.
+func shapeFromRequest(request string) *schema.Shape {
+	if strings.TrimSpace(request) == "" {
+		return nil
+	}
+	// CRLFs arrive escaped — singly (\r\n) or doubly (\\r\\n) depending on
+	// how the KV value was unescaped upstream. Longest form first, so the
+	// double escape never leaves a stray backslash behind to be miscounted as
+	// a header line.
+	text := strings.NewReplacer(
+		`\\r\\n`, "\n", `\r\n`, "\n", `\\n`, "\n", `\n`, "\n", "\r\n", "\n",
+	).Replace(request)
+	lines := strings.Split(text, "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	var s *schema.Shape
+	count, headerBytes := 0, 0
+	for _, line := range lines[1:] { // lines[0] is the request line
+		if strings.TrimSpace(line) == "" {
+			break // the blank line ends the header block
+		}
+		count++
+		headerBytes += len(line) + 2 // wire CRLF
+		if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "cookie") {
+			s = normalize.ShapeFromCookieHeader(s, value)
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+	if s == nil {
+		s = &schema.Shape{}
+	}
+	s.HeaderCount = normalize.IntPtr(count)
+	s.HeaderBytes = normalize.IntPtr(headerBytes)
+	return s
 }
 
 // hostFrom resolves the request host from a dedicated field if the logging

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -144,6 +145,14 @@ type flowMsg struct {
 		Response struct {
 			Status int `json:"status"`
 		} `json:"response"`
+		// Shape facts, captured at normalization before masking (schema 1.1).
+		Shape *struct {
+			RequestBytes *int64   `json:"request_bytes"`
+			HeaderCount  *int     `json:"header_count"`
+			HeaderBytes  *int     `json:"header_bytes"`
+			CookieCount  *int     `json:"cookie_count"`
+			CookieNames  []string `json:"cookie_names"`
+		} `json:"shape"`
 	} `json:"events"`
 }
 
@@ -230,26 +239,54 @@ func (w *worker) observe(msg *nats.Msg) {
 		return
 	}
 
-	status := 0
-	providers := make([]string, 0, len(fm.Events))
+	obs := profile.Observation{
+		FlowID: fm.FlowID,
+		Tenant: fm.Tenant,
+		Host:   fm.Request.Host,
+		Method: fm.Request.Method,
+		Path:   fm.Request.Path,
+		Query:  fm.Request.Query,
+		Seen:   fm.LastSeen,
+	}
+	cookieNames := map[string]bool{}
 	for i := len(fm.Events) - 1; i >= 0; i-- {
-		if status == 0 && fm.Events[i].Response.Status > 0 {
-			status = fm.Events[i].Response.Status
+		ev := fm.Events[i]
+		if obs.Status == 0 && ev.Response.Status > 0 {
+			obs.Status = ev.Response.Status
 		}
-		providers = append(providers, fm.Events[i].Provider)
+		obs.Providers = append(obs.Providers, ev.Provider)
+
+		// Shape facts merge across the flow's layers by maximum: each layer
+		// measures what its provider ships, and the ceiling is the largest
+		// honest measurement.
+		if s := ev.Shape; s != nil {
+			if s.RequestBytes != nil && (obs.RequestBytes == nil || *s.RequestBytes > *obs.RequestBytes) {
+				obs.RequestBytes = s.RequestBytes
+			}
+			if s.HeaderCount != nil && (obs.HeaderCount == nil || *s.HeaderCount > *obs.HeaderCount) {
+				obs.HeaderCount = s.HeaderCount
+			}
+			if s.HeaderBytes != nil && (obs.HeaderBytes == nil || *s.HeaderBytes > *obs.HeaderBytes) {
+				obs.HeaderBytes = s.HeaderBytes
+			}
+			if s.CookieCount != nil && (obs.CookieCount == nil || *s.CookieCount > *obs.CookieCount) {
+				obs.CookieCount = s.CookieCount
+			}
+			for _, n := range s.CookieNames {
+				cookieNames[n] = true
+			}
+		}
+	}
+	// Cookie NAMES enter profiles only when the tenant opted in; the count is
+	// structural and always kept.
+	if cfg.CookieNames {
+		for n := range cookieNames {
+			obs.CookieNames = append(obs.CookieNames, n)
+		}
+		sort.Strings(obs.CookieNames)
 	}
 
-	w.agg.Observe(profile.Observation{
-		FlowID:    fm.FlowID,
-		Tenant:    fm.Tenant,
-		Host:      fm.Request.Host,
-		Method:    fm.Request.Method,
-		Path:      fm.Request.Path,
-		Query:     fm.Request.Query,
-		Status:    status,
-		Providers: providers,
-		Seen:      fm.LastSeen,
-	})
+	w.agg.Observe(obs)
 	w.pending = append(w.pending, msg)
 	w.mu.Lock()
 	w.consumed++

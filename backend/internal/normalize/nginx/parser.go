@@ -22,7 +22,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
 )
 
-const parserVersion = "nginx/2.0"
+const parserVersion = "nginx/2.1"
 
 // record mirrors the JSON log_format this system expects nginx to emit.
 type record struct {
@@ -46,6 +46,11 @@ type record struct {
 	UpstreamTime   any    `json:"upstream_response_time"`
 	UserAgent      string `json:"user_agent"`
 	Referer        string `json:"referer"`
+	// HTTPCookie is an OPT-IN log_format field ($http_cookie). Its value is
+	// reduced to a cookie count and names for the request Shape and is never
+	// stored on the event — see docs/connecting-vendors.md before enabling it,
+	// because the raw log line itself will carry the values.
+	HTTPCookie string `json:"http_cookie"`
 }
 
 type Parser struct{}
@@ -113,6 +118,14 @@ func (p *Parser) Parse(raw []byte, receivedAt time.Time) (*schema.Event, error) 
 	if seconds := asFloat(r.RequestTime); seconds > 0 {
 		e.Response.DurationMS = seconds * 1000
 	}
+
+	// Shape, computed BEFORE masking. $request_length is nginx's own total
+	// (request line + headers + body). The cookie header, when the log_format
+	// opts into shipping it, contributes only its count and names.
+	if n := asInt(r.RequestLength); n > 0 {
+		e.Shape = &schema.Shape{RequestBytes: normalize.Int64Ptr(int64(n))}
+	}
+	e.Shape = normalize.ShapeFromCookieHeader(e.Shape, r.HTTPCookie)
 
 	if id, ok := keys.NewIdentifier(keys.NSRayID, NormalizeRayID(r.CFRay)); ok {
 		e.Identifiers = []string{id.String()}
