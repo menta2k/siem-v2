@@ -126,6 +126,12 @@ but pinning it means a job recreated later cannot silently change the meaning of
 
 **Required for the DataDome verdict**: `ResponseHeaders`
 
+**Recommended for the traffic profiler** — `ClientRequestBytes` gives the profiler a true
+"max request size" ceiling per endpoint. Capturing the `cookie` request header (a
+`request_fields` custom-field entry) additionally yields cookie count and names; the value is
+reduced to structure at normalization and then redacted by the masker like any other secret
+header, so it never reaches storage readable.
+
 ### The DataDome custom field
 
 DataDome's decision arrives on the Worker's subrequest as a **response** header. Capture it:
@@ -208,6 +214,13 @@ log_format siem_json escape=json '{'
 
 access_log /var/log/nginx/access.json siem_json;
 ```
+
+**Optional: cookie structure for the traffic profiler.** Adding
+`'"http_cookie":"$http_cookie",'` to the format lets the profiler learn per-endpoint cookie
+counts and names. The parser reduces the value to structure and never stores it on the event —
+but the raw log line (and therefore the raw evidence store, behind `view_raw`) will carry the
+values, which is why this is opt-in rather than part of the documented format. `request_length`
+is already in the format above and feeds the profiler's "max request size" ceiling.
 
 **`$http_cf_ray` arrives with a datacentre suffix** — `a2d6ea0f6813ccd4-DXB` — while Cloudflare
 logs only the bare id. The parser strips it. If you pre-process these logs anywhere else, strip it

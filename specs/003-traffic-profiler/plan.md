@@ -127,6 +127,15 @@ Work required, per provider:
 > **This is the one genuinely blocking question in the plan.** If extending capture is
 > not acceptable, v1 ships parameter profiling only and the "max headers / cookies /
 > request length" panels are honestly marked "not captured" rather than showing zeros.
+>
+> **As built (phase 3 delivered):** `schema.Shape` uses per-field nil pointers instead of
+> the sketched `Complete` flag — nil already says "not measured" per fact, which is
+> stronger than one boolean for the whole struct. Two refusals were added on top of the
+> sketch: Cloudflare does NOT claim header counts (Logpush `RequestHeaders` is a
+> configured subset, and counting a subset as "the headers" understates a ceiling while
+> claiming to measure it), and F5 ASM does NOT claim request bytes (captures truncate
+> bodies; a lying floor is worse than an absent number). nginx cookie capture is opt-in
+> via `$http_cookie` because the raw log line would carry the values.
 
 ---
 

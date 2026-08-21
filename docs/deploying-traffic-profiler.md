@@ -147,6 +147,23 @@ implicitly profile the whole estate. The profiler picks up config changes within
    deploy individual URLs appear first and merge into templates as volume accumulates. That is
    learning, not a fault.
 
+## What each provider can measure (request shape)
+
+Shape facts are captured at normalization, **before masking** (schema 1.1). A ceiling the
+provider cannot measure stays `null` and renders as "not captured" — never as 0. What you get
+depends on the feed:
+
+| Fact | Cloudflare | nginx | F5 ASM | DataDome |
+|---|---|---|---|---|
+| Max request size | ✅ `ClientRequestBytes` (enable on the Logpush job) | ✅ `$request_length` (in the documented format) | — (captures truncate bodies; a floor would lie) | — |
+| Max headers / header bytes | — (Logpush ships a configured subset, not the header block) | — | ✅ full header block of the captured request | — |
+| Cookie count / names | ✅ if the `cookie` header is captured as a custom field | ✅ if `$http_cookie` is added to the log format (opt-in) | ✅ from the captured request | — |
+
+Cookie handling is deliberately layered: parsers reduce the header to a count and names (values
+never reach the event), the masker then redacts the header value itself, profiles record names
+only when the tenant's `cookie_names` toggle is on, and the API shows names only to principals
+holding `view_sensitive`. See docs/connecting-vendors.md for the per-vendor enablement steps.
+
 ## Operating signals
 
 Constitution IV applies: the failure mode to watch is **consuming without producing**.

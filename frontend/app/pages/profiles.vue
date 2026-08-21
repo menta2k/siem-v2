@@ -539,7 +539,7 @@ const hostSuggestions = computed(() => hosts.value.map(h => h.host))
           <div class="text-caption text-medium-emphasis">
             Cookie names can identify software in use; they are shown only to
             principals with sensitive-data permission. Values are never stored.
-            Takes effect once request-shape capture is enabled for a provider.
+            Requires cookie capture on the feed — see the vendor connection guide.
           </div>
         </v-card-text>
         <v-card-actions>
