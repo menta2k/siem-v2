@@ -14,6 +14,23 @@ const draft = ref<FlowSearch>({ ...props.modelValue })
 
 watch(() => props.modelValue, (next) => { draft.value = { ...next } }, { deep: true })
 
+/**
+ * Native <input type="datetime-local"> only opens its calendar via a tiny
+ * indicator icon that is nearly invisible in the dark theme, so clicking the
+ * field appeared to do nothing. Open the browser's picker on any click of the
+ * field, making the whole control the affordance. showPicker() must run from a
+ * user gesture (the click is one) and is a no-op where unsupported.
+ */
+function openPicker(e: Event) {
+  const input = (e.currentTarget as HTMLElement | null)?.querySelector('input') as
+    (HTMLInputElement & { showPicker?: () => void }) | null
+  try {
+    input?.showPicker?.()
+  } catch {
+    // Older browsers or a blocked gesture: leave the field to its default behaviour.
+  }
+}
+
 const timeRangeOptions = [
   { title: 'Any time', value: '' },
   { title: 'Last 15 minutes', value: '15m' },
@@ -132,11 +149,13 @@ function numberOrUndefined(value: string | number | null): number | undefined {
           <v-text-field
             v-model="draft.from_local" type="datetime-local" label="From"
             density="compact" class="mb-1" data-test="time-from"
+            @click="openPicker"
           />
           <v-text-field
             v-model="draft.to_local" type="datetime-local" label="To"
             density="compact" class="mb-2" hint="Empty = now" persistent-hint
             data-test="time-to"
+            @click="openPicker"
           />
         </template>
 
