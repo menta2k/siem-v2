@@ -326,7 +326,7 @@ func (a *Aggregator) observeEndpoint(ep *EndpointProfile, o Observation, norm []
 // observeParam records one value of one parameter, returning the param key or
 // "" when the parameter cap refused a new entry.
 func (a *Aggregator) observeParam(ep *EndpointProfile, loc ParamLocation, name, value string, now time.Time) string {
-	name = stripNUL(name)
+	name = NormalizeParamName(stripNUL(name))
 	value = stripNUL(value)
 	key := paramKey(loc, name)
 	pp := ep.Params[key]

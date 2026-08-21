@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -104,6 +105,39 @@ func JoinTemplate(segs []string) string {
 		return "/"
 	}
 	return "/" + strings.Join(segs, "/")
+}
+
+// paramIndexRE matches a single bracketed array/map index, e.g. the "[335045]"
+// in "consent[335045]".
+var paramIndexRE = regexp.MustCompile(`\[[^\[\]]*\]`)
+
+// NormalizeParamName folds an array/map index that is a VARIABLE identifier into
+// empty brackets, so consent[335045] and consent[336191] collapse to a single
+// parameter consent[] instead of hundreds of one-off keys that blow the
+// per-endpoint parameter cap. Associative string keys (filters[category]) are
+// kept — they are meaningful field names, not ids.
+func NormalizeParamName(name string) string {
+	if !strings.Contains(name, "[") {
+		return name
+	}
+	return paramIndexRE.ReplaceAllStringFunc(name, func(b string) string {
+		inner := b[1 : len(b)-1]
+		if inner == "" || variableIndex(inner) {
+			return "[]"
+		}
+		return b
+	})
+}
+
+// variableIndex reports whether a bracket's contents look like an identifier
+// (a number, uuid, hash, date) rather than a stable named key.
+func variableIndex(s string) bool {
+	switch Infer(s) {
+	case TypeInt, TypeFloat, TypeUUID, TypeHex, TypeDate:
+		return true
+	default:
+		return false
+	}
 }
 
 // Normalize maps a concrete request path onto the scope's template space,

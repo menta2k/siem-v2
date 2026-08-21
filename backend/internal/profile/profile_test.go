@@ -583,3 +583,60 @@ func TestBodyParamsObservedAsBodyLocation(t *testing.T) {
 		t.Fatalf("MaxParamCount = %v, want 3", ep.MaxParamCount)
 	}
 }
+
+func TestNormalizeParamNameFoldsArrayIndices(t *testing.T) {
+	cases := map[string]string{
+		"consent[335045]":   "consent[]",
+		"consent[336191]":   "consent[]",
+		"categories[]":      "categories[]",
+		"data[0][1]":        "data[][]",
+		"filters[category]": "filters[category]", // named key kept
+		"job_sid":           "job_sid",
+		"x[550e8400-e29b-41d4-a716-446655440000]": "x[]",
+	}
+	for in, want := range cases {
+		if got := NormalizeParamName(in); got != want {
+			t.Errorf("NormalizeParamName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestArrayIndexParamsMergeToOne(t *testing.T) {
+	a := newTestAggregator()
+	for i := 0; i < 40; i++ {
+		o := Observation{
+			FlowID: fmt.Sprintf("c%d", i), Tenant: "acme", Host: "www.example.com",
+			Method: "POST", Path: "/consent", Status: 200, Providers: []string{"f5asm"},
+			Seen: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+			// each request carries a different set of numeric-id array keys
+			Body: fmt.Sprintf("job_sid=5&consent[%d]=1&consent[%d]=1", 335000+i, 336000+i),
+		}
+		a.Observe(o)
+	}
+	dirty, _ := a.Collect()
+	var ep *EndpointProfile
+	for _, e := range dirty {
+		if e.PathTemplate == "/consent" {
+			ep = e
+		}
+	}
+	if ep == nil {
+		t.Fatal("no /consent endpoint")
+	}
+	names := map[string]bool{}
+	for _, pp := range ep.Params {
+		names[pp.Name] = true
+	}
+	if !names["consent[]"] || !names["job_sid"] {
+		t.Fatalf("expected consent[] and job_sid, got %v", names)
+	}
+	// consent[<id>] must NOT appear as distinct params
+	for n := range names {
+		if n != "consent[]" && n != "job_sid" {
+			t.Fatalf("unexpected distinct param %q (array indices not folded)", n)
+		}
+	}
+	if ep.Truncated {
+		t.Fatal("endpoint should not be truncated after folding array indices")
+	}
+}
