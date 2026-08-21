@@ -154,6 +154,14 @@ func (a *Aggregator) Observe(o Observation) {
 	}
 	a.stats.Observed++
 
+	// PostgreSQL rejects NUL bytes in text columns and, as the \u0000 escape, in
+	// jsonb (SQLSTATE 22P05). Scanner traffic carries them routinely, so strip
+	// them at the capture boundary before any string reaches host/path text,
+	// cookie_names, or the params jsonb.
+	o.Host = stripNUL(o.Host)
+	o.Method = stripNUL(o.Method)
+	o.Path = stripNUL(o.Path)
+
 	host := canonicalHost(o.Host)
 	method := strings.ToUpper(strings.TrimSpace(o.Method))
 	if method == "" {
@@ -222,6 +230,7 @@ func (a *Aggregator) observeEndpoint(ep *EndpointProfile, o Observation, norm []
 		ep.MaxCookieCount = maxInt(ep.MaxCookieCount, *o.CookieCount)
 	}
 	for _, name := range o.CookieNames {
+		name = stripNUL(name)
 		if ep.CookieNames[name] {
 			continue
 		}
@@ -308,6 +317,8 @@ func (a *Aggregator) observeEndpoint(ep *EndpointProfile, o Observation, norm []
 // observeParam records one value of one parameter, returning the param key or
 // "" when the parameter cap refused a new entry.
 func (a *Aggregator) observeParam(ep *EndpointProfile, loc ParamLocation, name, value string, now time.Time) string {
+	name = stripNUL(name)
+	value = stripNUL(value)
 	key := paramKey(loc, name)
 	pp := ep.Params[key]
 	if pp == nil {
@@ -471,4 +482,14 @@ func canonicalHost(host string) string {
 		host = host[:i]
 	}
 	return host
+}
+
+// stripNUL removes NUL bytes. PostgreSQL cannot store them in text columns and
+// rejects them as the \u0000 escape in jsonb (SQLSTATE 22P05); request data
+// from scanners carries them routinely. Cheap no-op when absent.
+func stripNUL(s string) string {
+	if strings.IndexByte(s, 0) < 0 {
+		return s
+	}
+	return strings.ReplaceAll(s, "\x00", "")
 }

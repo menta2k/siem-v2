@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -464,5 +465,47 @@ func TestEndpointCapRefusesNewButKeepsLearning(t *testing.T) {
 		if ep.PathTemplate == "/a" && ep.Observations != 2 {
 			t.Fatalf("/a observations = %d, want 2", ep.Observations)
 		}
+	}
+}
+
+// TestParamsSerialiseWithoutNULEscape reproduces the production flush failure:
+// a NUL byte in a parameter key or value marshals to the \u0000 escape, which
+// PostgreSQL jsonb rejects (SQLSTATE 22P05), silently failing every flush. The
+// params column must never contain that escape, even for scanner traffic that
+// plants NUL bytes in parameter names and values.
+func TestParamsSerialiseWithoutNULEscape(t *testing.T) {
+	a := newTestAggregator()
+	nul := string([]byte{0})
+	query := "page=2&na" + nul + "me=x&q=a" + nul + "b"
+	a.Observe(obs("f1", "/search", query))
+
+	dirty, _ := a.Collect()
+	if len(dirty) == 0 {
+		t.Fatal("no endpoints collected")
+	}
+	nulEscape := string([]byte{92, 117, 48, 48, 48, 48})
+	for _, ep := range dirty {
+		// Exactly what profilerepo marshals before the jsonb upsert.
+		for _, v := range []any{ep.Params, ep.StatusMix} {
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(b), nulEscape) {
+				t.Fatalf("serialised jsonb value contains the rejected NUL escape: %s", b)
+			}
+		}
+	}
+}
+
+func TestStripNULAndSeparator(t *testing.T) {
+	if got := stripNUL("clean"); got != "clean" {
+		t.Fatalf("clean string altered: %q", got)
+	}
+	if got := stripNUL("a" + string([]byte{0}) + "b"); got != "ab" {
+		t.Fatalf("stripNUL did not remove NUL: %q", got)
+	}
+	if strings.IndexByte(paramKey(LocationQuery, "p"), 0) >= 0 {
+		t.Fatal("paramKey still uses a NUL separator")
 	}
 }

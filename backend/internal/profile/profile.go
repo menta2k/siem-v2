@@ -102,7 +102,12 @@ func EndpointID(tenant, host, method, pathTemplate string) string {
 	return "ep_" + hex.EncodeToString(h[:12])
 }
 
-func paramKey(loc ParamLocation, name string) string { return string(loc) + "\x00" + name }
+// paramKey doubles as the JSON object key for a parameter in the params jsonb
+// column, so its separator must be a byte PostgreSQL jsonb accepts. NUL (0x00)
+// serialises to a \u0000 escape that jsonb rejects (SQLSTATE 22P05), silently
+// failing every flush; the Unit Separator (0x1F) is kept by jsonb and never
+// appears in a real parameter name.
+func paramKey(loc ParamLocation, name string) string { return string(loc) + "\x1f" + name }
 
 // maxInt lifts a measured value into a nil-able ceiling.
 func maxInt(cur *int, v int) *int {
