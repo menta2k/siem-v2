@@ -1,6 +1,6 @@
 # Deployment
 
-Four services, each independently deployable. That separation is a requirement, not a preference:
+Five services, each independently deployable. That separation is a requirement, not a preference:
 **collection must survive maintenance of everything else** (FR-065, SC-022).
 
 | Service | Role | Can it be down? |
@@ -8,6 +8,7 @@ Four services, each independently deployable. That separation is a requirement, 
 | `logproc` | Receives, buffers, parses, correlates, stores | **No.** Records are lost only if this cannot buffer. |
 | `apiserver` | Search, evaluation, alerts, admin | Yes — collection continues. |
 | `retentiond` | Tiering, expiry, legal hold, archive | Yes — expiry is delayed, nothing is lost. |
+| `profilerd` | Traffic profiler: learns per-URL baselines from completed flows | Yes — profiles go stale; flows accumulate on `SIEM_FLOWS` (24 h window) and replay when it returns. See [deploying-traffic-profiler.md](deploying-traffic-profiler.md). |
 | `wirefilter-svc` | Cloudflare expression evaluation | Yes — CF rule testing reports unavailable; everything else works. |
 
 ## Build
@@ -30,7 +31,9 @@ the wirefilter sidecar, deliberately isolated in its own process (research.md R1
    creation and cannot be retrofitted**; getting this wrong means recreating the bucket and
    re-copying the archive.
 3. **`logproc`** — start before pointing any provider at it, so the first delivery is not refused.
-4. **`apiserver`**, **`wirefilter-svc`** — any time.
+4. **`apiserver`**, **`wirefilter-svc`**, **`profilerd`** — any time. `profilerd` applies migrations
+   itself on start, so it has no ordering dependency beyond PostgreSQL being reachable; started
+   before `logproc` it simply waits on an empty stream.
 
 ### First start
 
@@ -61,7 +64,7 @@ Required environment:
 
 | Variable | Used by |
 |---|---|
-| `SIEM_PG_DSN` | apiserver, retentiond |
+| `SIEM_PG_DSN` | apiserver, retentiond, profilerd |
 | `SIEM_INGEST_SECRET` | logproc |
 | `SIEM_S3_ACCESS_KEY` / `SIEM_S3_SECRET_KEY` | retentiond |
 | `SIEM_CORS_ORIGINS` | apiserver — explicit origins only, never a wildcard |
@@ -99,6 +102,9 @@ The documented target is 2,000 records/sec per provider, ~8,000 combined.
   cluster build.
 - **The exact-join ratio is the metric that matters under load.** Throughput can look healthy while
   correlation quality falls, and the second failure is the one that makes the data untrustworthy.
+- **`profilerd` runs as a single instance.** Its durable consumer and in-memory learning state
+  assume one process; it is an aggregation consumer, not part of the ingest path, so scaling it
+  out buys nothing until profiling volume genuinely demands a redesign.
 
 ## Health
 
