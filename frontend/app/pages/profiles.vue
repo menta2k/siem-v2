@@ -45,7 +45,7 @@ interface Endpoint {
   params?: Param[]
 }
 interface Param {
-  location: 'query' | 'path'
+  location: 'query' | 'path' | 'body'
   name: string
   inferred_type: string
   observations: number
@@ -63,6 +63,7 @@ interface ProfilerConfig {
   hosts: string[]
   exclude_paths: string[]
   cookie_names: boolean
+  body_params: boolean
   min_observations_to_publish: number
 }
 
@@ -188,7 +189,7 @@ const shapeRows = computed(() => {
 // ---- configuration --------------------------------------------------------
 const configDialog = ref(false)
 const cfg = ref<ProfilerConfig>({
-  enabled: false, hosts: [], exclude_paths: [], cookie_names: false, min_observations_to_publish: 20,
+  enabled: false, hosts: [], exclude_paths: [], cookie_names: false, body_params: false, min_observations_to_publish: 20,
 })
 const cfgBusy = ref(false)
 const cfgError = ref('')
@@ -450,7 +451,7 @@ const hostSuggestions = computed(() => hosts.value.map(h => h.host))
             <tbody>
               <tr v-for="p in detail.params" :key="`${p.location}-${p.name}`">
                 <td class="font-weight-medium">{{ p.name }}</td>
-                <td><v-chip size="x-small" variant="tonal" :color="p.location === 'path' ? 'brown' : 'primary'">{{ p.location }}</v-chip></td>
+                <td><v-chip size="x-small" variant="tonal" :color="p.location === 'path' ? 'brown' : p.location === 'body' ? 'teal' : 'primary'">{{ p.location }}</v-chip></td>
                 <td><v-chip size="x-small" variant="tonal" :color="typeColor(p.inferred_type)" label>{{ p.inferred_type }}</v-chip></td>
                 <td>
                   <v-progress-linear
@@ -540,6 +541,15 @@ const hostSuggestions = computed(() => hosts.value.map(h => h.host))
             Cookie names can identify software in use; they are shown only to
             principals with sensitive-data permission. Values are never stored.
             Requires cookie capture on the feed — see the vendor connection guide.
+          </div>
+          <v-switch
+            v-model="cfg.body_params" color="primary" hide-details class="mt-2"
+            label="Learn request-body parameters (F5)"
+          />
+          <div class="text-caption text-medium-emphasis">
+            Parses POST body parameter names and types from F5 ASM's captured
+            request. Credential-shaped fields (password, token, cvv, ...) are
+            blanked at capture — the name is learned, never the value.
           </div>
         </v-card-text>
         <v-card-actions>

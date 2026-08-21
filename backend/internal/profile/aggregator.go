@@ -14,12 +14,16 @@ import (
 // Observation is what the profiler learns from: one completed flow, reduced to
 // the request facts a baseline is built on.
 type Observation struct {
-	FlowID    string
-	Tenant    string
-	Host      string
-	Method    string
-	Path      string
-	Query     string
+	FlowID string
+	Tenant string
+	Host   string
+	Method string
+	Path   string
+	Query  string
+	// Body is the request body's parameters as a form-encoded string
+	// (name=value&...), secret-filtered at capture. Empty unless the tenant
+	// opted into body profiling and a provider shipped a parseable body.
+	Body      string
 	Status    int
 	Providers []string
 	Seen      time.Time
@@ -280,11 +284,14 @@ func (a *Aggregator) observeEndpoint(ep *EndpointProfile, o Observation, norm []
 		}
 	}
 
-	// Query parameters. ParseQuery reports an error on malformed input but
-	// still returns everything it could parse — use that rather than dropping
-	// the whole string, and count the malformation.
-	if o.Query != "" {
-		values, err := url.ParseQuery(o.Query)
+	// Query and body parameters, parsed identically (both form-encoded). Body
+	// values were secret-filtered at capture; observeParam filters again as
+	// defence in depth. MaxParamCount is the query+body total of one request.
+	observeParams := func(loc ParamLocation, raw string) int {
+		if raw == "" {
+			return 0
+		}
+		values, err := url.ParseQuery(raw)
 		if err != nil {
 			a.stats.InvalidQuery++
 		}
@@ -293,17 +300,19 @@ func (a *Aggregator) observeEndpoint(ep *EndpointProfile, o Observation, norm []
 			names = append(names, name)
 		}
 		sort.Strings(names) // deterministic cap behaviour under replay
-		count := len(names)
-		ep.MaxParamCount = maxInt(ep.MaxParamCount, count)
 		for _, name := range names {
 			for _, v := range values[name] {
 				ep.MaxValueLen = maxInt(ep.MaxValueLen, len(v))
-				if key := a.observeParam(ep, LocationQuery, name, v, now); key != "" {
+				if key := a.observeParam(ep, loc, name, v, now); key != "" {
 					present[key] = true
 				}
 			}
 		}
+		return len(names)
 	}
+	paramCount := observeParams(LocationQuery, o.Query)
+	paramCount += observeParams(LocationBody, o.Body)
+	ep.MaxParamCount = maxInt(ep.MaxParamCount, paramCount)
 
 	// Absence is evidence too: a parameter's presence rate needs a denominator
 	// counting the requests that did NOT carry it.

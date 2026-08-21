@@ -210,6 +210,12 @@ type Shape struct {
 	// only — the value is split away before it can be recorded.
 	CookieCount *int     `json:"cookie_count,omitempty"`
 	CookieNames []string `json:"cookie_names,omitempty"`
+	// BodyForm is the request body's parameters as a form-encoded string
+	// (name=value&...), from providers that ship the body (F5 ASM). Values that
+	// look like secrets are blanked at capture, so a password field survives as
+	// a name with no value. Present only for form/JSON bodies the capture could
+	// parse; a truncated body yields whatever parsed.
+	BodyForm string `json:"body_form,omitempty"`
 }
 
 type Response struct {

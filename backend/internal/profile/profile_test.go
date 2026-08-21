@@ -547,3 +547,39 @@ func TestStripNULAndSeparator(t *testing.T) {
 		t.Fatal("paramKey still uses a NUL separator")
 	}
 }
+
+func TestBodyParamsObservedAsBodyLocation(t *testing.T) {
+	a := newTestAggregator()
+	for i := 0; i < 30; i++ {
+		o := Observation{
+			FlowID: fmt.Sprintf("b%d", i), Tenant: "acme", Host: "www.example.com",
+			Method: "POST", Path: "/apply", Status: 200,
+			Providers: []string{"f5asm"},
+			Seen:      time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+			Body:      "job_id=42&cv=hello&page=2",
+		}
+		a.Observe(o)
+	}
+	dirty, _ := a.Collect()
+	var ep *EndpointProfile
+	for _, e := range dirty {
+		if e.PathTemplate == "/apply" && e.Method == "POST" {
+			ep = e
+		}
+	}
+	if ep == nil {
+		t.Fatal("no /apply endpoint")
+	}
+	got := map[string]ParamLocation{}
+	for _, pp := range ep.Params {
+		got[pp.Name] = pp.Location
+	}
+	for _, name := range []string{"job_id", "cv", "page"} {
+		if got[name] != LocationBody {
+			t.Fatalf("param %q location = %q, want body (params: %v)", name, got[name], got)
+		}
+	}
+	if ep.MaxParamCount == nil || *ep.MaxParamCount != 3 {
+		t.Fatalf("MaxParamCount = %v, want 3", ep.MaxParamCount)
+	}
+}

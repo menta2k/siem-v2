@@ -139,18 +139,32 @@ func shapeFromRequest(request string) *schema.Shape {
 	}
 	var s *schema.Shape
 	count, headerBytes := 0, 0
-	for _, line := range lines[1:] { // lines[0] is the request line
+	contentType := ""
+	bodyStart := len(lines)          // no body unless a blank line is found
+	for i, line := range lines[1:] { // lines[0] is the request line
 		if strings.TrimSpace(line) == "" {
-			break // the blank line ends the header block
+			bodyStart = i + 2 // first line after the blank separator
+			break             // the blank line ends the header block
 		}
 		count++
 		headerBytes += len(line) + 2 // wire CRLF
-		if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "cookie") {
-			s = normalize.ShapeFromCookieHeader(s, value)
+		if name, value, ok := strings.Cut(line, ":"); ok {
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "cookie":
+				s = normalize.ShapeFromCookieHeader(s, value)
+			case "content-type":
+				contentType = strings.TrimSpace(value)
+			}
 		}
 	}
 	if count == 0 {
 		return nil
+	}
+	// The request body (F5 truncates it) carries POST parameters no other layer
+	// sees. Parse names + secret-filtered values from it, before masking.
+	if bodyStart < len(lines) {
+		body := strings.Join(lines[bodyStart:], "\n")
+		s = normalize.ShapeFromBody(s, contentType, body)
 	}
 	if s == nil {
 		s = &schema.Shape{}

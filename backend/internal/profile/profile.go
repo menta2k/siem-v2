@@ -34,6 +34,7 @@ type ParamLocation string
 const (
 	LocationQuery ParamLocation = "query"
 	LocationPath  ParamLocation = "path"
+	LocationBody  ParamLocation = "body"
 )
 
 // ParamProfile is the learned baseline of one parameter of one endpoint.

@@ -152,6 +152,7 @@ type flowMsg struct {
 			HeaderBytes  *int     `json:"header_bytes"`
 			CookieCount  *int     `json:"cookie_count"`
 			CookieNames  []string `json:"cookie_names"`
+			BodyForm     string   `json:"body_form"`
 		} `json:"shape"`
 	} `json:"events"`
 }
@@ -249,6 +250,7 @@ func (w *worker) observe(msg *nats.Msg) {
 		Seen:   fm.LastSeen,
 	}
 	cookieNames := map[string]bool{}
+	var bodyForm string
 	for i := len(fm.Events) - 1; i >= 0; i-- {
 		ev := fm.Events[i]
 		if obs.Status == 0 && ev.Response.Status > 0 {
@@ -275,6 +277,9 @@ func (w *worker) observe(msg *nats.Msg) {
 			for _, n := range s.CookieNames {
 				cookieNames[n] = true
 			}
+			if bodyForm == "" && s.BodyForm != "" {
+				bodyForm = s.BodyForm
+			}
 		}
 	}
 	// Cookie NAMES enter profiles only when the tenant opted in; the count is
@@ -284,6 +289,10 @@ func (w *worker) observe(msg *nats.Msg) {
 			obs.CookieNames = append(obs.CookieNames, n)
 		}
 		sort.Strings(obs.CookieNames)
+	}
+	// Body parameters enter profiles only when the tenant opted in.
+	if cfg.BodyParams {
+		obs.Body = bodyForm
 	}
 
 	w.agg.Observe(obs)

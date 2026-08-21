@@ -21,6 +21,11 @@ type TenantConfig struct {
 	// CookieNames — when cookie capture lands (plan §3.2) — controls whether
 	// names are kept or only counted. Defaults to counts-only.
 	CookieNames bool `json:"cookie_names"`
+	// BodyParams opts into learning request-body parameters (from F5 ASM's
+	// captured body). Off by default: a body is more sensitive than a query
+	// string, so profiling it is a deliberate per-tenant choice. Values are
+	// always secret-filtered at capture regardless.
+	BodyParams bool `json:"body_params"`
 	// MinObservationsToPublish keeps one-off URLs (scanner noise) out of the
 	// UI until they prove recurrent; they are still counted.
 	MinObservationsToPublish int `json:"min_observations_to_publish"`
