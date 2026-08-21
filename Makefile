@@ -6,7 +6,7 @@ BIN := bin
 GO ?= go
 GOFLAGS ?= -trimpath
 LDFLAGS ?= -s -w
-SERVICES := logproc apiserver retentiond
+SERVICES := logproc apiserver retentiond profilerd
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 
 .PHONY: help

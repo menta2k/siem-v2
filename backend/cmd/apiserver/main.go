@@ -61,6 +61,7 @@ type apiServer struct {
 	authSvc    *service.AuthService
 	feeds      *service.FeedService
 	filters    *service.FilterService
+	profiles   *service.ProfileService
 	rawRet     *postgres.RawRetentionRepo
 	asnNames   *asnowner.Resolver
 	vl         *victorialogs.Client
@@ -161,6 +162,7 @@ func run(confPath string, logger *slog.Logger) error {
 	s.authSvc = authSvc
 	s.feeds = &service.FeedService{Repo: postgres.NewFeedRepo(pool), Sources: postgres.NewSourceRepo(pool)}
 	s.filters = &service.FilterService{Repo: postgres.NewFilterRepo(pool)}
+	s.profiles = &service.ProfileService{Repo: postgres.NewProfileRepo(pool)}
 	s.rawRet = postgres.NewRawRetentionRepo(pool)
 
 	if err := s.seedDev(ctx0()); err != nil {
@@ -201,6 +203,7 @@ func (s *apiServer) routes() http.Handler {
 	s.authSvc.Audit = audit
 	s.feeds.Audit = audit
 	s.filters.Audit = audit
+	s.profiles.Audit = audit
 	auth := &server.Authenticator{Resolve: s.resolvePrincipal, Audit: audit, Logger: s.logger}
 
 	// Authenticated routes. Each carries the permission it requires, so the
@@ -261,6 +264,21 @@ func (s *apiServer) routes() http.Handler {
 		server.RequirePermission(tenancy.PermManageSources, audit, s.filters.Get))
 	api.HandleFunc("POST /api/v1/filters",
 		server.RequirePermission(tenancy.PermManageSources, audit, s.filters.Set))
+	// Traffic profiles: reading a baseline is analyst work (view_flows);
+	// deciding what gets analyzed, or forgetting what was learned, is data
+	// governance (manage_sources) — the ingest-filter split.
+	api.HandleFunc("GET /api/v1/profiles",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.profiles.List))
+	api.HandleFunc("GET /api/v1/profiles/hosts",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.profiles.Hosts))
+	api.HandleFunc("GET /api/v1/profiles/{endpointID}",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.profiles.Get))
+	api.HandleFunc("DELETE /api/v1/profiles/{endpointID}",
+		server.RequirePermission(tenancy.PermManageSources, audit, s.profiles.Delete))
+	api.HandleFunc("GET /api/v1/profiler/config",
+		server.RequirePermission(tenancy.PermManageSources, audit, s.profiles.GetConfig))
+	api.HandleFunc("POST /api/v1/profiler/config",
+		server.RequirePermission(tenancy.PermManageSources, audit, s.profiles.SetConfig))
 	api.HandleFunc("GET /api/v1/settings/raw-retention",
 		server.RequirePermission(tenancy.PermManageRetention, audit, s.getRawRetention))
 	api.HandleFunc("POST /api/v1/settings/raw-retention",

@@ -136,6 +136,22 @@ func (m *Masker) tokenize(value string) string {
 	return "tok_" + hex.EncodeToString(mac.Sum(nil)[:8])
 }
 
+// ContainsSecret reports whether a value matches any of the secret patterns.
+// Exported for consumers that must refuse to STORE such a value at all (the
+// traffic profiler's enum candidates), reusing the exact patterns the masker
+// applies so the two can never disagree.
+func ContainsSecret(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, p := range valuePatterns {
+		if p.pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
 // redactPatterns replaces secret-shaped substrings anywhere in a value.
 func (m *Masker) redactPatterns(value string) (string, bool) {
 	if value == "" {

@@ -98,6 +98,21 @@ func run(confPath string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Completed flows are also published to the SIEM_FLOWS conveyor for the
+	// traffic profiler. Strictly best-effort: if the stream cannot be created
+	// the profiler simply sees nothing — collection must not know or care.
+	if flowStream, err := jetstream.ConnectFlows(jetstream.FlowStreamConfig{
+		URL: cfg.Storage.JetStream.URL,
+	}); err != nil {
+		logger.Warn("flow conveyor unavailable; traffic profiling will see no flows", "error", err)
+	} else {
+		defer flowStream.Close()
+		pub := newFlowPublisher(flowStream, logger)
+		go pub.run(ctx)
+		pipeline.OnFlow = pub.enqueue
+		logger.Info("publishing completed flows for profiling", "stream", "SIEM_FLOWS")
+	}
+
 	// Correlation state survives restart (FR-023): a deploy must resume the
 	// in-flight window, not discard every flow whose window was still open.
 	// Best-effort — a Valkey outage degrades to the pre-existing behaviour

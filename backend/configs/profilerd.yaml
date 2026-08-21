@@ -1,0 +1,28 @@
+service:
+  name: profilerd
+  version: 0.1.0
+  env: dev
+
+server:
+  # Health/metrics only; the profiler exposes no data API — profiles are read
+  # through the apiserver, where authn/authz live.
+  http_addr: ":8300"
+  read_timeout: 30s
+  write_timeout: 30s
+
+storage:
+  jetstream:
+    url: "nats://localhost:4222"
+  postgres:
+    dsn_ref: "env:SIEM_PG_DSN"
+    max_conns: 10
+    min_conns: 1
+
+profiler:
+  # Learned profiles are committed on this cadence; consumed flows are
+  # acknowledged only after the covering flush, so a crash replays at most
+  # one interval.
+  flush_interval: 30s
+  consumer_name: "profiler"
+  # An early flush is forced past this many unacknowledged flows.
+  max_pending_flows: 5000

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# One dockerfile for all three Go services (v1 pattern): SERVICE selects the
+# One dockerfile for all four Go services (v1 pattern): SERVICE selects the
 # binary, and the build identity args flow into internal/version so a running
 # container can say what it is.
 FROM golang:1.25-alpine AS build

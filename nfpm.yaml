@@ -1,6 +1,6 @@
 # OS package definition, rendered by the release workflow with VERSION and ARCH.
 #
-# The packages ship the three Go services, their systemd units and example
+# The packages ship the four Go services, their systemd units and example
 # configuration. The frontend and the wirefilter sidecar deliberately do NOT
 # ship here: both need their own runtimes (node, and a Rust binary that would
 # need per-arch cross-compilation) and are delivered as container images.
@@ -19,12 +19,16 @@ contents:
     dst: /usr/bin/siem-logproc
   - src: dist/siem-retentiond
     dst: /usr/bin/siem-retentiond
+  - src: dist/siem-profilerd
+    dst: /usr/bin/siem-profilerd
   - src: deploy/systemd/siem-apiserver.service
     dst: /lib/systemd/system/siem-apiserver.service
   - src: deploy/systemd/siem-logproc.service
     dst: /lib/systemd/system/siem-logproc.service
   - src: deploy/systemd/siem-retentiond.service
     dst: /lib/systemd/system/siem-retentiond.service
+  - src: deploy/systemd/siem-profilerd.service
+    dst: /lib/systemd/system/siem-profilerd.service
   # Example configs land in /etc/siem as conffiles so an upgrade never
   # overwrites an operator's edits.
   - src: backend/configs/apiserver.yaml
@@ -35,6 +39,9 @@ contents:
     type: config|noreplace
   - src: backend/configs/retentiond.yaml
     dst: /etc/siem/retentiond.yaml
+    type: config|noreplace
+  - src: backend/configs/profilerd.yaml
+    dst: /etc/siem/profilerd.yaml
     type: config|noreplace
 scripts:
   preinstall: deploy/packaging/preinstall.sh

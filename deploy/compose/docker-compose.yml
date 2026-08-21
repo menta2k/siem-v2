@@ -162,6 +162,23 @@ services:
       victorialogs-raw: { condition: service_started }
       rustfs: { condition: service_started }
 
+  profilerd:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.backend
+      args: { SERVICE: profilerd }
+    profiles: ["app"]
+    restart: unless-stopped
+    command: ["--conf", "/etc/siem/profilerd.yaml"]
+    environment:
+      SIEM_PG_DSN: postgres://${SIEM_PG_USER:-siem}:${SIEM_PG_PASSWORD:-siem_dev_only}@postgres:5432/${SIEM_PG_DB:-siem}?sslmode=disable
+    volumes:
+      - ./configs/profilerd.yaml:/etc/siem/profilerd.yaml:ro
+    ports: ["8300:8300"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+
   frontend:
     build:
       context: ../..

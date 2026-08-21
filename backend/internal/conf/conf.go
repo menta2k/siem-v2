@@ -22,6 +22,7 @@ type Config struct {
 	Ingest     Ingest     `yaml:"ingest"`
 	Correlate  Correlate  `yaml:"correlate"`
 	Evaluation Evaluation `yaml:"evaluation"`
+	Profiler   Profiler   `yaml:"profiler"`
 }
 
 type Service struct {
@@ -108,6 +109,21 @@ type Correlate struct {
 	HeuristicWindow time.Duration `yaml:"heuristic_window"`
 }
 
+// Profiler configures the traffic profiler daemon (profilerd). Which domains
+// are analyzed is PER-TENANT policy edited in the GUI and stored on the tenant
+// row; this section only tunes the process itself.
+type Profiler struct {
+	// FlushInterval is how often learned profiles are committed to Postgres.
+	// Consumed messages are acknowledged only after the covering flush, so a
+	// crash replays at most one interval.
+	FlushInterval time.Duration `yaml:"flush_interval"`
+	// ConsumerName is the durable JetStream consumer identity on SIEM_FLOWS.
+	ConsumerName string `yaml:"consumer_name"`
+	// MaxPendingFlows forces an early flush once this many messages await
+	// acknowledgement, bounding both memory and the replay window.
+	MaxPendingFlows int `yaml:"max_pending_flows"`
+}
+
 type Evaluation struct {
 	WirefilterURL    string        `yaml:"wirefilter_url"`
 	Timeout          time.Duration `yaml:"timeout"`
@@ -165,6 +181,11 @@ func Default() *Config {
 			AnomalyThreshold: 5,
 			RequestBodyLimit: 10 << 20,
 		},
+		Profiler: Profiler{
+			FlushInterval:   30 * time.Second,
+			ConsumerName:    "profiler",
+			MaxPendingFlows: 5000,
+		},
 	}
 }
 
@@ -186,6 +207,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Ingest.MaxBodyBytes <= 0 {
 		return fmt.Errorf("ingest.max_body_bytes must be positive")
+	}
+	if c.Profiler.FlushInterval <= 0 {
+		return fmt.Errorf("profiler.flush_interval must be positive")
+	}
+	if c.Profiler.MaxPendingFlows <= 0 {
+		return fmt.Errorf("profiler.max_pending_flows must be positive")
 	}
 	return nil
 }

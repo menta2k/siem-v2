@@ -1,0 +1,24 @@
+# Container-network variant of backend/configs — addresses are compose service
+# names, not host ports. Mounted read-only by the app profile.
+service:
+  name: profilerd
+  version: 0.1.0
+  env: dev
+
+server:
+  http_addr: ":8300"
+  read_timeout: 30s
+  write_timeout: 30s
+
+storage:
+  jetstream:
+    url: "nats://nats:4222"
+  postgres:
+    dsn_ref: "env:SIEM_PG_DSN"
+    max_conns: 10
+    min_conns: 1
+
+profiler:
+  flush_interval: 30s
+  consumer_name: "profiler"
+  max_pending_flows: 5000
