@@ -64,7 +64,7 @@ func TestJoinIsASemilattice(t *testing.T) {
 
 func testOptions() TemplateOptions {
 	// Small thresholds so tests need few observations. Ratios mirror defaults.
-	return TemplateOptions{MinSamples: 10, MaxDistinct: 8, MinDistinctForType: 4, TypeShare: 0.9}
+	return TemplateOptions{MinSamples: 10, MaxDistinct: 8, MinDistinctForType: 4, TypeShare: 0.9, VarSingletonShare: 0.8, VarRepeatFactor: 4}
 }
 
 func TestNumericIDsCollapseToIntTemplate(t *testing.T) {
@@ -119,13 +119,51 @@ func TestLiteralTriggeringCollapseStaysLiteral(t *testing.T) {
 func TestHighCardinalityMixedValuesCollapseToVar(t *testing.T) {
 	e := NewEngine(testOptions())
 	var last []string
-	for i := 0; i < 20; i++ {
+	// Unique, non-repeating values past the evidence gate: an id/token stream.
+	for i := 0; i < 50; i++ {
 		// Mixed shapes so no single promotable type dominates.
 		last, _ = e.Normalize(fmt.Sprintf("/files/report-%d.pdf", i))
 	}
 	if got := JoinTemplate(last); got != "/files/{var}" {
 		t.Fatalf("template = %q, want /files/{var}", got)
 	}
+}
+
+func TestRepeatingRouteVocabularyStaysLiteral(t *testing.T) {
+	// A site's real top-level routes: many distinct literals, each hit many
+	// times. High cardinality alone must NOT fold them into /{var} — repetition
+	// marks them as routes, not identifiers. (This is the jobs.bg first-segment
+	// case: /front_job_search.php, /company, /candidates, ... stay distinct.)
+	e := NewEngine(testOptions())
+	routes := []string{
+		"front_job_search.php", "company", "candidates", "back.php",
+		"search_history.php", "reload.php", "suggest.php", "chat",
+		"js_cv.php", "notification_counter.php", "search_form.php", "al_handshake.php",
+	}
+	var got map[string]bool = map[string]bool{}
+	for r := 0; r < 30; r++ {
+		for _, name := range routes {
+			segs, _ := e.Normalize("/" + name)
+			got[JoinTemplate(segs)] = true
+		}
+	}
+	if got["/{var}"] {
+		t.Fatalf("repeating route vocabulary collapsed to /{var}; templates seen: %v", keysOf(got))
+	}
+	for _, name := range routes {
+		if !got["/"+name] {
+			t.Fatalf("route /%s did not stay literal; templates seen: %v", name, keysOf(got))
+		}
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestSingleLiteralNeverCollapses(t *testing.T) {

@@ -21,14 +21,30 @@ type TemplateOptions struct {
 	// TypeShare is the fraction of observations that must share one promotable
 	// type for a typed collapse (0.9: a stray literal does not block learning).
 	TypeShare float64
+	// VarSingletonShare gates the untyped {var} collapse: a high-cardinality,
+	// untyped position folds to {var} only when at least this fraction of its
+	// tracked values are still seen just once — the signature of an id/slug/token
+	// stream. A large but REPEATING vocabulary (a site's real top-level routes)
+	// stays literal however big it grows, keeping /front_job_search and /company
+	// distinct instead of both becoming /{var}. 0 disables the gate.
+	VarSingletonShare float64
+	// VarRepeatFactor is how much evidence the untyped collapse needs before it
+	// trusts that signal: the position must have >= MaxDistinct*VarRepeatFactor
+	// observations. At the instant cardinality first exceeds MaxDistinct every
+	// value has been seen about once, so a route vocabulary is momentarily
+	// indistinguishable from an id stream; deciding then would wrongly (and
+	// monotonically) collapse routes. Waiting lets a real vocabulary repeat.
+	VarRepeatFactor int
 }
 
 func DefaultTemplateOptions() TemplateOptions {
 	return TemplateOptions{
 		MinSamples:         64,
-		MaxDistinct:        32,
+		MaxDistinct:        64,
 		MinDistinctForType: 8,
 		TypeShare:          0.9,
+		VarSingletonShare:  0.85,
+		VarRepeatFactor:    4,
 	}
 }
 
@@ -170,14 +186,16 @@ func (e *Engine) observe(prefix, value string) bool {
 	}
 	st.count++
 	st.typeCounts[Infer(value)]++
-	if !st.overflow {
-		if _, seen := st.values[value]; seen || len(st.values) <= e.opts.MaxDistinct {
-			st.values[value]++
-		} else {
-			// One past the cap: remember that the true distinct count exceeds
-			// what we hold, then stop growing the map.
-			st.overflow = true
-		}
+	// Always count a value already tracked, even after overflow: its repetition
+	// is the signal that separates a route (hit again and again) from an id
+	// (seen once). Only the DISTINCT set stops growing at the cap.
+	if _, seen := st.values[value]; seen {
+		st.values[value]++
+	} else if len(st.values) <= e.opts.MaxDistinct {
+		st.values[value]++
+	} else {
+		// One past the cap: the true distinct count exceeds what we hold.
+		st.overflow = true
 	}
 
 	if st.count < e.opts.MinSamples {
@@ -197,11 +215,32 @@ func (e *Engine) observe(prefix, value string) bool {
 			return true
 		}
 	}
-	if distinct > e.opts.MaxDistinct {
+	if distinct > e.opts.MaxDistinct &&
+		st.count >= e.opts.MaxDistinct*e.opts.VarRepeatFactor &&
+		e.variableEnough(st) {
 		e.collapse(prefix, TypeVar)
 		return true
 	}
 	return false
+}
+
+// variableEnough decides the ambiguous case — a position past MaxDistinct with
+// no dominant type. Repetition is the discriminator: an identifier space almost
+// never repeats a value, while a route vocabulary is hit again and again. It
+// collapses to {var} only when the tracked values are mostly still singletons;
+// a repeating set of literals stays distinct routes, bounded by the per-host
+// endpoint cap rather than by cardinality.
+func (e *Engine) variableEnough(st *segStat) bool {
+	if e.opts.VarSingletonShare <= 0 || len(st.values) == 0 {
+		return true
+	}
+	singletons := 0
+	for _, c := range st.values {
+		if c == 1 {
+			singletons++
+		}
+	}
+	return float64(singletons)/float64(len(st.values)) >= e.opts.VarSingletonShare
 }
 
 // dominantType returns the promotable type covering at least TypeShare of the
