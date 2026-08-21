@@ -26,6 +26,11 @@ services:
     image: ghcr.io/menta2k/siem-v2/retentiond:${IMAGE_TAG:-latest}
     pull_policy: always
 
+  profilerd:
+    build: !reset null
+    image: ghcr.io/menta2k/siem-v2/profilerd:${IMAGE_TAG:-latest}
+    pull_policy: always
+
   frontend:
     build: !reset null
     image: ghcr.io/menta2k/siem-v2/frontend:${IMAGE_TAG:-latest}
