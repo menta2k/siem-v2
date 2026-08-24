@@ -59,7 +59,8 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 	}
 
 	f.FirstSeen, f.LastSeen = timeSpan(ordered)
-	f.EffectiveOutcome, f.TerminatingLayer = resolveOutcome(ordered)
+	var verdictConflict bool
+	f.EffectiveOutcome, f.TerminatingLayer, verdictConflict = resolveOutcome(ordered)
 
 	// Coverage is judged only up to the TERMINATING layer: a request blocked at
 	// the edge legitimately never reached the origin, so the origin's absence
@@ -86,6 +87,7 @@ func Materialize(correlationKey string, events []schema.Event, opts Options) *Fl
 	}
 
 	propagateFlags(f, ordered)
+	flagVerdictConflict(f, verdictConflict)
 	return f
 }
 
@@ -174,22 +176,66 @@ func layerCoverage(events []schema.Event, expected []schema.Layer) (present, mis
 	return present, missing
 }
 
-// resolveOutcome determines what actually happened to the request.
+// resolveOutcome determines what actually happened to the request, returning
+// the effective action, the terminating layer, and whether a terminating
+// verdict was contradicted by a downstream delivery.
 //
 // The terminating layer is the FIRST layer in causal order that took a
 // terminating action: once the edge blocks a request, a later layer's opinion is
 // advisory at best and usually did not see the request at all. Reporting the last
 // verdict instead would credit the wrong system with the block (FR-027).
-func resolveOutcome(ordered []schema.Event) (schema.Action, schema.Layer) {
+//
+// A block is only effective if the request did not go on to be SERVED by a
+// deeper layer. In a bridged multi-ray flow a terminating verdict from one
+// Cloudflare ray can be merged with another ray's successful origin delivery
+// (e.g. DataDome returns hard_block on the parent ray while the bridged ray is
+// served 200 from origin); crediting the block would report a request that was
+// actually delivered as blocked. When a delivery is observed strictly deeper
+// than a terminating verdict, that verdict did not take effect: skip it and
+// signal a conflict so the reconciliation stays auditable.
+func resolveOutcome(ordered []schema.Event) (schema.Action, schema.Layer, bool) {
+	servedAt, served := servedLayer(ordered)
+	servedOrder, _ := servedAt.Order()
+	conflict := false
+	for _, e := range ordered {
+		if !e.Verdict.Terminating {
+			continue
+		}
+		if served {
+			if lo, ok := e.Layer.Order(); ok && servedOrder > lo {
+				conflict = true
+				continue
+			}
+		}
+		return e.Verdict.Action, e.Layer, conflict
+	}
+	// Nothing (still standing) terminated it. The outcome is what the deepest
+	// layer reported, since that is the closest thing to what the client
+	// actually received.
+	last := ordered[len(ordered)-1]
+	return last.Verdict.Action, "", conflict
+}
+
+// servedLayer returns the deepest layer that actually delivered a response to
+// the client — a non-terminating verdict with a 2xx/3xx status — and whether
+// one exists. A delivery downstream of a block is proof the block never took
+// effect.
+func servedLayer(ordered []schema.Event) (schema.Layer, bool) {
+	var deepest schema.Layer
+	found := false
+	best := -1
 	for _, e := range ordered {
 		if e.Verdict.Terminating {
-			return e.Verdict.Action, e.Layer
+			continue
+		}
+		if s := e.Response.Status; s < 200 || s >= 400 {
+			continue
+		}
+		if o, ok := e.Layer.Order(); ok && o > best {
+			best, deepest, found = o, e.Layer, true
 		}
 	}
-	// Nothing terminated it. The outcome is what the deepest layer reported,
-	// since that is the closest thing to what the client actually received.
-	last := ordered[len(ordered)-1]
-	return last.Verdict.Action, ""
+	return deepest, found
 }
 
 // timingAttribution records each layer's observed duration where the underlying
@@ -295,6 +341,14 @@ func propagateFlags(f *Flow, ordered []schema.Event) {
 	}
 	if f.Bridged {
 		f.addFlag(schema.FlagBridgedCorrelation)
+	}
+}
+
+// flagVerdictConflict records that a terminating verdict was overruled by a
+// downstream delivery during outcome resolution (see resolveOutcome).
+func flagVerdictConflict(f *Flow, conflict bool) {
+	if conflict {
+		f.addFlag(schema.FlagVerdictConflict)
 	}
 }
 

@@ -109,6 +109,7 @@ const (
 	FlagUnmappedValues       QualityFlag = "unmapped_values"
 	FlagHeuristicCorrelation QualityFlag = "heuristic_correlation"
 	FlagBridgedCorrelation   QualityFlag = "bridged_correlation"
+	FlagVerdictConflict      QualityFlag = "verdict_conflict"
 	FlagNoCorrelationKey     QualityFlag = "no_correlation_key"
 	FlagDataDomeFieldsAbsent QualityFlag = "datadome_fields_absent"
 )

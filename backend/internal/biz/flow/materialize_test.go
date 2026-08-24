@@ -500,3 +500,57 @@ func TestResponseSideBlockCountsOriginPresent(t *testing.T) {
 		t.Fatalf("all four layers reached the request and must be counted, got %d", len(f.LayersPresent))
 	}
 }
+
+// eventStatus is like event but records a response status, needed to exercise
+// delivery-based outcome reconciliation.
+func eventStatus(id string, layer schema.Layer, at time.Time, action schema.Action, status int) schema.Event {
+	e := event(id, layer, at, action)
+	e.Response.Status = status
+	return e
+}
+
+// TestTerminatingBlockContradictedByOriginDeliveryIsNotEffective: in a bridged
+// multi-ray flow a DataDome hard_block can be merged with another ray's 200
+// origin delivery. The block never took effect, so the flow must resolve to the
+// delivered outcome, drop the terminating layer, and carry verdict_conflict.
+func TestTerminatingBlockContradictedByOriginDeliveryIsNotEffective(t *testing.T) {
+	events := []schema.Event{
+		eventStatus("cf", schema.LayerEdge, base, schema.ActionAllowed, 200),
+		eventStatus("dd", schema.LayerBotManagement, base.Add(time.Millisecond), schema.ActionBlocked, 0),
+		eventStatus("f5", schema.LayerAppFirewall, base.Add(2*time.Millisecond), schema.ActionAllowed, 200),
+		eventStatus("ngx", schema.LayerOrigin, base.Add(3*time.Millisecond), schema.ActionAllowed, 200),
+	}
+	o := opts(true)
+	o.Bridged = true
+	f := Materialize("ray:abc", events, o)
+
+	if f.EffectiveOutcome != schema.ActionAllowed {
+		t.Errorf("origin served 200, outcome must be allowed, got %q", f.EffectiveOutcome)
+	}
+	if f.TerminatingLayer != "" {
+		t.Errorf("a contradicted block does not terminate, got layer %q", f.TerminatingLayer)
+	}
+	if !f.HasFlag(schema.FlagVerdictConflict) {
+		t.Errorf("the overruled block must be flagged verdict_conflict, flags=%v", f.DataQualityFlags)
+	}
+}
+
+// TestEnforcedBlockStillTerminates: a block with no downstream delivery (the
+// normal case) must remain the effective, terminating outcome.
+func TestEnforcedBlockStillTerminates(t *testing.T) {
+	events := []schema.Event{
+		eventStatus("cf", schema.LayerEdge, base, schema.ActionAllowed, 200),
+		eventStatus("dd", schema.LayerBotManagement, base.Add(time.Millisecond), schema.ActionBlocked, 403),
+	}
+	f := Materialize("ray:abc", events, opts(true))
+
+	if f.EffectiveOutcome != schema.ActionBlocked {
+		t.Errorf("enforced block must stay blocked, got %q", f.EffectiveOutcome)
+	}
+	if f.TerminatingLayer != schema.LayerBotManagement {
+		t.Errorf("bot_management terminated it, got %q", f.TerminatingLayer)
+	}
+	if f.HasFlag(schema.FlagVerdictConflict) {
+		t.Error("an enforced block is not a conflict")
+	}
+}
