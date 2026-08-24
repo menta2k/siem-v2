@@ -31,6 +31,19 @@ async function load() {
 onMounted(load)
 
 const res = computed(() => data.value?.result)
+
+// The Core Rule Set fires dozens of setup, initialization and anomaly-scoring
+// rules on every request (900xxx config, 901xxx init, 9xxx13/9xxx14 phase
+// markers, 949xxx score evaluators). They carry no severity and no attack tag
+// and mean nothing on their own; showing them buries the one rule that made the
+// decision. A detection is a rule with a scoring severity or an attack class.
+function isDetection(m: { severity: string, tags?: string[] }): boolean {
+  const sev = (m.severity || '').toLowerCase()
+  if (sev === 'critical' || sev === 'error' || sev === 'warning' || sev === 'notice') return true
+  return !!crsCategory(m.tags)
+}
+const detections = computed(() => (res.value?.matched_rules ?? []).filter(isDetection))
+const hiddenCount = computed(() => (res.value?.matched_rules.length ?? 0) - detections.value.length)
 </script>
 
 <template>
@@ -61,15 +74,15 @@ const res = computed(() => data.value?.result)
         class="mb-1 text-caption"
       >{{ warn }}</v-alert>
 
-      <div v-if="!res.matched_rules.length" class="text-caption text-medium-emphasis">
-        No Core Rule Set rule fired on the reconstructed request.
+      <div v-if="!detections.length" class="text-caption text-medium-emphasis">
+        No Core Rule Set detection rule fired — only setup and scoring rules, which every request trips.
       </div>
       <v-table v-else density="compact">
         <thead>
           <tr><th>Rule</th><th>Class</th><th>Severity</th><th>Message</th></tr>
         </thead>
         <tbody>
-          <tr v-for="m in res.matched_rules" :key="m.rule_id">
+          <tr v-for="m in detections" :key="m.rule_id">
             <td class="text-caption"><code>{{ m.rule_id }}</code></td>
             <td class="text-caption">
               <v-chip v-if="crsCategory(m.tags)" color="error" size="x-small" variant="tonal" label>
@@ -77,7 +90,7 @@ const res = computed(() => data.value?.result)
               </v-chip>
             </td>
             <td>
-              <v-chip :color="crsSeverityColor(m.severity)" size="x-small" variant="tonal" label>{{ m.severity }}</v-chip>
+              <v-chip :color="crsSeverityColor(m.severity)" size="x-small" variant="tonal" label>{{ m.severity || '—' }}</v-chip>
             </td>
             <td class="text-caption">
               {{ m.message }}
@@ -87,6 +100,9 @@ const res = computed(() => data.value?.result)
         </tbody>
       </v-table>
 
+      <div v-if="hiddenCount > 0" class="text-caption text-medium-emphasis mt-1">
+        {{ hiddenCount }} CRS setup and scoring rules that fire on every request are not shown.
+      </div>
       <div class="text-caption text-medium-emphasis mt-2">{{ data?.reconstruction_note }}</div>
     </template>
   </div>
