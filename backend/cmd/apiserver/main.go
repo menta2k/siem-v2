@@ -230,6 +230,19 @@ func (s *apiServer) routes() http.Handler {
 		server.RequirePermission(tenancy.PermViewAudit, audit, s.listAudit))
 	api.HandleFunc("GET /api/v1/stats/verdicts",
 		server.RequirePermission(tenancy.PermViewFlows, audit, s.verdictStats))
+	// WAF migration (F5 ASM -> Cloudflare): evidence-only comparison of what F5
+	// blocked vs what Cloudflare did, per correlated request. Reads sit behind
+	// view_flows; the candidate-rule test runs the evaluator (run_evaluation).
+	api.HandleFunc("GET /api/v1/waf-migration/uncovered",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafUncovered))
+	api.HandleFunc("GET /api/v1/waf-migration/ready",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafReadyToEnforce))
+	api.HandleFunc("GET /api/v1/waf-migration/false-positives",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafFalsePositives))
+	api.HandleFunc("GET /api/v1/waf-migration/samples",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafSamples))
+	api.HandleFunc("POST /api/v1/waf-migration/evaluate",
+		server.RequirePermission(tenancy.PermRunEvaluation, audit, s.wafEvaluate))
 	// Disk topology is operator information, not analyst information (v1
 	// decision) — gated on the retention permission, which only admins hold.
 	api.HandleFunc("GET /api/v1/stats/storage",

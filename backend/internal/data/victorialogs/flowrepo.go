@@ -299,6 +299,7 @@ func (r *FlowRepo) Search(ctx context.Context, tenant string, s FlowSearch) ([]*
 // must stay regular fields (R6).
 func flowDocument(f *flow.Flow) Document {
 	payload, _ := json.Marshal(f)
+	wafF5V, wafCFV, wafF5Viol, wafCFRules := wafIndexFields(f)
 	return Document{
 		Time: f.FirstSeen,
 		Msg:  string(payload),
@@ -336,7 +337,16 @@ func flowDocument(f *flow.Flow) Document {
 			"vendor_request_ids": vendorRequestIDsJoined(f),
 			// Participating providers, space-joined for word-matching — the
 			// record's own "provider" field is the constant "correlated".
-			"providers":          providersJoined(f),
+			"providers": providersJoined(f),
+			// WAF-migration rollups: each vendor's verdict in the 3-word
+			// vocabulary, F5's violation tokens, and EVERY Cloudflare rule that
+			// matched (incl. log-mode). Space-joined for word-matching, so the
+			// migration stages can filter and count by a violation or rule id that
+			// otherwise lives only inside verdict.reason_raw. See wafmigration_index.go.
+			"f5_verdict":         wafF5V,
+			"cf_verdict":         wafCFV,
+			"f5_violations":      wafF5Viol,
+			"cf_matched_rules":   wafCFRules,
 			"asn":                f.Client.ASN,
 			"data_quality_flags": strings.Join(qualityFlags(f), " "),
 		},
