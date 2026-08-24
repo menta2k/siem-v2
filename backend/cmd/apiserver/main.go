@@ -459,9 +459,42 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.nameFlowVerdicts(r, flows)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"flows": flows, "count": len(flows), "offset": req.Offset,
 	})
+}
+
+// nameFlowVerdicts fills the rule name on any event verdict that carries a rule
+// id but no description, resolving every id across the page in one lookup. The
+// deciding rule's name is often present already (Logpush shipped it on this
+// flow); this reaches the ones named only on OTHER flows.
+func (s *apiServer) nameFlowVerdicts(r *http.Request, flows []*flow.Flow) {
+	if s.ruleNames == nil || len(flows) == 0 {
+		return
+	}
+	var ids []string
+	for _, f := range flows {
+		for i := range f.Events {
+			if v := f.Events[i].Verdict; v.RuleID != "" && v.RuleName == "" {
+				ids = append(ids, v.RuleID)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	names := s.ruleNames.Describe(r.Context(), tenantOf(r), ids)
+	for _, f := range flows {
+		for i := range f.Events {
+			v := &f.Events[i].Verdict
+			if v.RuleName == "" {
+				if n := names[v.RuleID]; n != "" {
+					v.RuleName = n
+				}
+			}
+		}
+	}
 }
 
 func (s *apiServer) getFlow(w http.ResponseWriter, r *http.Request) {
@@ -480,6 +513,7 @@ func (s *apiServer) getFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, apierrors.NotFound("flow not present for this tenant"))
 		return
 	}
+	s.nameFlowVerdicts(r, []*flow.Flow{f})
 	writeJSON(w, http.StatusOK, f)
 }
 
@@ -817,12 +851,14 @@ func (s *apiServer) verdictStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	topSources, topNetworks := s.topPanels(ctx, tenant, from, now)
+	topRules := s.topRulesPanel(ctx, tenant, from, now)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_flows":          total,
 		"range":                r.URL.Query().Get("range"),
 		"top_sources":          topSources,
 		"top_networks":         topNetworks,
+		"top_rules":            topRules,
 		"by_outcome":           byOutcome,
 		"by_terminating_layer": byLayer,
 		"by_completeness":      byCompleteness,

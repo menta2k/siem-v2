@@ -179,6 +179,42 @@ func (r *FlowRepo) TopSources(ctx context.Context, tenant string, from, to time.
 	return out, nil
 }
 
+// RuleStat is one Cloudflare rule's decision volume over the window.
+type RuleStat struct {
+	RuleID  string
+	Flows   int
+	Blocked int
+}
+
+// TopRules aggregates the Cloudflare rules that DECIDED the most requests
+// (rule_id is the terminating rule), busiest first. Flows with no deciding rule
+// are excluded — the panel is about which rules are doing the work.
+func (r *FlowRepo) TopRules(ctx context.Context, tenant string, from, to time.Time, limit int) ([]RuleStat, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return nil, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} _time:[%s, %s] rule_id:* `+
+		`| stats by (rule_id) count() flows, count() if (effective_outcome:=blocked) blocked `+
+		`| sort by (flows desc) | limit %d`,
+		quote(tenant), quote(string(KindFlow)),
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RuleStat, 0, len(rows))
+	for _, row := range rows {
+		id, _ := row["rule_id"].(string)
+		if id == "" {
+			continue
+		}
+		out = append(out, RuleStat{
+			RuleID: id, Flows: atoiField(row["flows"]), Blocked: atoiField(row["blocked"]),
+		})
+	}
+	return out, nil
+}
+
 // TopNetworks aggregates the busiest origin ASNs over the window.
 func (r *FlowRepo) TopNetworks(ctx context.Context, tenant string, from, to time.Time, limit int) ([]NetworkStat, error) {
 	if !safeValue.MatchString(tenant) || tenant == "" {

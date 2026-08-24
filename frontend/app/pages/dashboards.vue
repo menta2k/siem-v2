@@ -242,6 +242,37 @@ icon="mdi-information-outline" size="x-small"
           </v-card>
         </v-col>
 
+        <v-col cols="12">
+          <v-card data-test="top-rules">
+            <v-card-title class="text-subtitle-2">
+              Top Cloudflare rules
+              <span class="text-caption text-medium-emphasis ml-1">by requests decided; names resolved from ingested data</span>
+            </v-card-title>
+            <v-card-text>
+              <v-table density="compact">
+                <thead>
+                  <tr><th>Rule</th><th class="text-right">Flows</th><th class="text-right">Blocked</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="rule in stats.top_rules" :key="rule.rule_id">
+                    <td>
+                      <NuxtLink :to="{ path: '/', query: { rule_id: rule.rule_id } }" class="text-caption text-primary">
+                        {{ rule.rule_name || rule.rule_id }}
+                      </NuxtLink>
+                      <div v-if="rule.rule_name" class="text-caption text-medium-emphasis"><code>{{ rule.rule_id }}</code></div>
+                    </td>
+                    <td class="text-right text-caption">{{ rule.flows }}</td>
+                    <td class="text-right text-caption">{{ blockRate(rule.flows, rule.blocked) }}</td>
+                  </tr>
+                  <tr v-if="!stats.top_rules?.length">
+                    <td colspan="3" class="text-caption text-medium-emphasis">No Cloudflare rule decided a request in this range.</td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card-text>
+          </v-card>
+        </v-col>
+
         <v-col v-if="can.manageRetention" cols="12">
           <v-card data-test="storage-headroom">
             <v-card-title class="text-subtitle-2">Storage headroom</v-card-title>

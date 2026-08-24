@@ -13,11 +13,15 @@ const PAGE_SIZE = 50
 const page = ref(0)
 const hasMore = ref(false)
 
-// The dashboard's Top networks rows link here as /?asn=N — pre-apply it so
-// the link lands on the filtered result, not on an empty form.
+// The dashboard's Top networks / Top rules rows link here as /?asn=N or
+// /?rule_id=X — pre-apply so the link lands on the filtered result, not on an
+// empty form.
 const route = useRoute()
 const asnParam = Number(route.query.asn)
 if (Number.isFinite(asnParam) && asnParam > 0) filters.value.asn = asnParam
+if (typeof route.query.rule_id === 'string' && route.query.rule_id) {
+  filters.value.rule_id = route.query.rule_id
+}
 
 // The drawer keeps the result set underneath, so working a list stays a list.
 const { flowId: selectedFlowId, show: openFlow } = useFlowDrawer()

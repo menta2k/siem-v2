@@ -82,6 +82,37 @@ func (s *apiServer) topPanels(ctx context.Context, tenant string, from, to time.
 	return sources, networks
 }
 
+// ruleCount is one Cloudflare rule's decision volume on the dashboard.
+type ruleCount struct {
+	RuleID   string `json:"rule_id"`
+	RuleName string `json:"rule_name,omitempty"`
+	Flows    int    `json:"flows"`
+	Blocked  int    `json:"blocked"`
+}
+
+// topRulesPanel builds the Top Cloudflare rules panel: the rules that decided
+// the most requests over the window, with their names resolved in one batched
+// lookup (bare id when a rule was never seen named).
+func (s *apiServer) topRulesPanel(ctx context.Context, tenant string, from, to time.Time) []ruleCount {
+	rows, err := s.repo.TopRules(ctx, tenant, from, to, topN)
+	if err != nil {
+		return []ruleCount{}
+	}
+	out := make([]ruleCount, 0, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ruleCount{RuleID: r.RuleID, Flows: r.Flows, Blocked: r.Blocked})
+		ids = append(ids, r.RuleID)
+	}
+	if s.ruleNames != nil && len(ids) > 0 {
+		names := s.ruleNames.Describe(ctx, tenant, ids)
+		for i := range out {
+			out[i].RuleName = names[out[i].RuleID]
+		}
+	}
+	return out
+}
+
 // storageClass is one VictoriaLogs instance's disk picture.
 type storageClass struct {
 	Reachable bool   `json:"reachable"`
