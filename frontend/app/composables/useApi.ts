@@ -115,6 +115,7 @@ export interface WafUncoveredGroup {
 }
 export interface WafRuleAgreement {
   rule_id: string
+  rule_name?: string
   correlated: number
   f5_blocked: number
   f5_flagged: number
@@ -129,6 +130,7 @@ export interface WafSample {
   flow_id: string
   event_time: string
   client_ip: string
+  client_asn?: number
   country: string
   request_host: string
   request_path: string
@@ -139,6 +141,35 @@ export interface WafSample {
   f5_violations: string[]
   cloudflare_verdict: string
   cloudflare_rule_id: string
+  cloudflare_rule_name?: string
+  // Cloudflare WAF attack scores, INVERTED (1 = attack, 100 = clean); absent
+  // when this deployment's Logpush job does not ship them.
+  attack_score?: number
+  sqli_score?: number
+  xss_score?: number
+  rce_score?: number
+}
+export interface WafOwaspMatch {
+  rule_id: number
+  message: string
+  data?: string
+  severity: string
+  tags?: string[]
+}
+export interface WafOwaspResult {
+  result: {
+    matched_rules: WafOwaspMatch[]
+    anomaly_score: number
+    score_available: boolean
+    threshold: number
+    would_block: boolean
+    interrupted?: boolean
+    paranoia_level: number
+    warnings?: string[]
+  }
+  engine: string
+  ruleset: string
+  reconstruction_note: string
 }
 export interface WafSelector {
   violation?: string
@@ -219,8 +250,11 @@ export function useApi() {
   async function wafEvaluate(body: Record<string, unknown>) {
     return await $fetch(`${base}/waf-migration/evaluate`, { method: 'POST', headers: headers(), body })
   }
+  async function wafOwasp(body: { flow_id: string, paranoia_level?: number }) {
+    return await $fetch<WafOwaspResult>(`${base}/waf-migration/owasp`, { method: 'POST', headers: headers(), body })
+  }
 
-  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth, wafUncovered, wafRules, wafSamples, wafEvaluate }
+  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth, wafUncovered, wafRules, wafSamples, wafEvaluate, wafOwasp }
 }
 
 /** Human label for a layer. */

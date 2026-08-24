@@ -70,8 +70,29 @@ func mapVerdict(r record) schema.Verdict {
 	return schema.Verdict{
 		Action:    schema.ActionAllowed,
 		Mapped:    true,
-		ReasonRaw: map[string]any{"field_family": "none", "status": r.EdgeResponseStatus},
+		ReasonRaw: mergeAttackScores(map[string]any{"field_family": "none", "status": r.EdgeResponseStatus}, r),
 	}
+}
+
+// mergeAttackScores folds Cloudflare's WAF attack scores into a reason map when
+// the Logpush job ships them. The scale is INVERTED (1 = attack, 100 = clean),
+// so the values are carried verbatim for the console to render with that
+// caveat. On a deployment whose Logpush job omits the fields nothing is added,
+// and the reason map is returned unchanged.
+func mergeAttackScores(reason map[string]any, r record) map[string]any {
+	if r.WAFAttackScore != nil {
+		reason["WAFAttackScore"] = *r.WAFAttackScore
+	}
+	if r.WAFSQLiAttackScore != nil {
+		reason["WAFSQLiAttackScore"] = *r.WAFSQLiAttackScore
+	}
+	if r.WAFXSSAttackScore != nil {
+		reason["WAFXSSAttackScore"] = *r.WAFXSSAttackScore
+	}
+	if r.WAFRCEAttackScore != nil {
+		reason["WAFRCEAttackScore"] = *r.WAFRCEAttackScore
+	}
+	return reason
 }
 
 func modernVerdict(r record) (schema.Verdict, bool) {
@@ -92,6 +113,7 @@ func modernVerdict(r record) (schema.Verdict, bool) {
 		"SecuritySources":         r.SecuritySources,
 		"SecurityRuleIDs":         r.SecurityRuleIDs,
 	}
+	mergeAttackScores(reason, r)
 
 	mapped, ok := actionMap[strings.ToLower(action)]
 	if !ok {
@@ -125,6 +147,7 @@ func legacyVerdict(r record) (schema.Verdict, bool) {
 		"FirewallMatchesSources": r.FirewallMatchesSources,
 		"FirewallMatchesRuleIDs": r.FirewallMatchesRuleIDs,
 	}
+	mergeAttackScores(reason, r)
 
 	// The string form in FirewallMatchesActions is more specific than the numeric
 	// enum, so prefer it when both are present.

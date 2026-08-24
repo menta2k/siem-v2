@@ -243,6 +243,8 @@ func (s *apiServer) routes() http.Handler {
 		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafSamples))
 	api.HandleFunc("POST /api/v1/waf-migration/evaluate",
 		server.RequirePermission(tenancy.PermRunEvaluation, audit, s.wafEvaluate))
+	api.HandleFunc("POST /api/v1/waf-migration/owasp",
+		server.RequirePermission(tenancy.PermRunEvaluation, audit, s.wafOwasp))
 	// Disk topology is operator information, not analyst information (v1
 	// decision) — gated on the retention permission, which only admins hold.
 	api.HandleFunc("GET /api/v1/stats/storage",

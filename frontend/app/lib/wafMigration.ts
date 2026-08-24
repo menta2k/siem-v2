@@ -23,6 +23,36 @@ export function wafVerdictColor(verdict: string): string {
   }
 }
 
+/**
+ * Cloudflare's WAF attack score band. THE SCALE IS INVERTED: 1 is certainly an
+ * attack, 100 certainly clean — the opposite of every other score. Always shown
+ * with a word so the number is never misread. 0/undefined means "not scored".
+ */
+export function attackBand(score?: number): { color: string, label: string } | null {
+  if (score === undefined || score <= 0) return null
+  if (score <= 20) return { color: 'error', label: 'attack' }
+  if (score <= 50) return { color: 'warning', label: 'suspicious' }
+  if (score <= 80) return { color: 'info', label: 'leaning clean' }
+  return { color: 'success', label: 'clean' }
+}
+
+/** The attack class a CRS rule belongs to, read off its own tags. */
+export function crsCategory(tags?: string[]): string {
+  const t = (tags ?? []).find((x) => x.startsWith('attack-'))
+  return t ? t.replace('attack-', '').toUpperCase() : ''
+}
+
+/** CRS severity to a Vuetify colour. */
+export function crsSeverityColor(severity: string): string {
+  switch (severity.toUpperCase()) {
+    case 'CRITICAL': return 'error'
+    case 'ERROR': return 'error'
+    case 'WARNING': return 'warning'
+    case 'NOTICE': return 'info'
+    default: return 'secondary'
+  }
+}
+
 /** A reading to a colour + human label. */
 export function readingLabel(reading: string): { color: string, text: string } {
   switch (reading) {

@@ -32,7 +32,10 @@ function pct(n: number, total: number) { return total > 0 ? Math.round((n / tota
     <tbody>
       <template v-for="rule in rules" :key="rule.rule_id">
         <tr style="cursor:pointer" @click="toggle(rule.rule_id)">
-          <td class="text-caption"><code>{{ rule.rule_id }}</code></td>
+          <td class="text-caption">
+            <div v-if="rule.rule_name" class="font-weight-medium">{{ rule.rule_name }}</div>
+            <code class="text-medium-emphasis">{{ rule.rule_id }}</code>
+          </td>
           <td class="text-caption">{{ rule.request_host || `${rule.hosts} hosts` }}</td>
           <td class="text-right">{{ rule.correlated }}</td>
           <td class="text-right">{{ rule.f5_blocked }}</td>

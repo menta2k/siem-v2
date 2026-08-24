@@ -13,6 +13,7 @@ import (
 	"github.com/menta2k/siem-v2/backend/internal/data/victorialogs"
 	apierrors "github.com/menta2k/siem-v2/backend/internal/errors"
 	"github.com/menta2k/siem-v2/backend/internal/normalize/schema"
+	"github.com/menta2k/siem-v2/backend/internal/owasp"
 )
 
 // WAF-migration read endpoints (F5 ASM -> Cloudflare). Evidence only: they say
@@ -52,6 +53,7 @@ func (s *apiServer) wafUncovered(w http.ResponseWriter, r *http.Request) {
 // wafRuleAgreement is one Cloudflare rule's agreement row on the wire.
 type wafRuleAgreement struct {
 	RuleID      string    `json:"rule_id"`
+	RuleName    string    `json:"rule_name,omitempty"`
 	Correlated  int       `json:"correlated"`
 	F5Blocked   int       `json:"f5_blocked"`
 	F5Flagged   int       `json:"f5_flagged"`
@@ -100,7 +102,7 @@ func (s *apiServer) wafRuleStage(w http.ResponseWriter, r *http.Request, keep ma
 			continue
 		}
 		row := wafRuleAgreement{
-			RuleID: c.RuleID, Correlated: c.Correlated,
+			RuleID: c.RuleID, RuleName: c.RuleName, Correlated: c.Correlated,
 			F5Blocked: c.F5Blocked, F5Flagged: c.F5Flagged, F5Allowed: c.F5Allowed,
 			Hosts: len(c.Hosts), Reading: reading, FirstSeen: c.FirstSeen, LastSeen: c.LastSeen,
 		}
@@ -146,19 +148,28 @@ func wafSelectorFromQuery(r *http.Request) victorialogs.WafSelector {
 
 // wafSample is one example request on the wire.
 type wafSample struct {
-	FlowID            string   `json:"flow_id"`
-	EventTime         string   `json:"event_time"`
-	ClientIP          string   `json:"client_ip"`
-	Country           string   `json:"country"`
-	RequestHost       string   `json:"request_host"`
-	RequestPath       string   `json:"request_path"`
-	RequestQuery      string   `json:"request_query"`
-	RequestMethod     string   `json:"request_method"`
-	UserAgent         string   `json:"user_agent"`
-	F5Verdict         string   `json:"f5_verdict"`
-	F5Violations      []string `json:"f5_violations"`
-	CloudflareVerdict string   `json:"cloudflare_verdict"`
-	CloudflareRuleID  string   `json:"cloudflare_rule_id"`
+	FlowID             string   `json:"flow_id"`
+	EventTime          string   `json:"event_time"`
+	ClientIP           string   `json:"client_ip"`
+	ClientASN          int      `json:"client_asn,omitempty"`
+	Country            string   `json:"country"`
+	RequestHost        string   `json:"request_host"`
+	RequestPath        string   `json:"request_path"`
+	RequestQuery       string   `json:"request_query"`
+	RequestMethod      string   `json:"request_method"`
+	UserAgent          string   `json:"user_agent"`
+	F5Verdict          string   `json:"f5_verdict"`
+	F5Violations       []string `json:"f5_violations"`
+	CloudflareVerdict  string   `json:"cloudflare_verdict"`
+	CloudflareRuleID   string   `json:"cloudflare_rule_id"`
+	CloudflareRuleName string   `json:"cloudflare_rule_name,omitempty"`
+	// Cloudflare WAF attack scores, INVERTED (1 = attack, 100 = clean). Nil when
+	// the Logpush job on this deployment does not ship them. -1 marks "not
+	// scored" only for the overall score; the drivers are omitted when absent.
+	AttackScore *int `json:"attack_score,omitempty"`
+	SQLiScore   *int `json:"sqli_score,omitempty"`
+	XSSScore    *int `json:"xss_score,omitempty"`
+	RCEScore    *int `json:"rce_score,omitempty"`
 }
 
 func (s *apiServer) wafSamples(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +203,7 @@ func wafVendorVerdict(a schema.Action) string {
 
 func wafSampleFromFlow(f *flow.Flow) wafSample {
 	sm := wafSample{
-		FlowID: f.FlowID, ClientIP: f.Client.IP, Country: f.Client.Country,
+		FlowID: f.FlowID, ClientIP: f.Client.IP, ClientASN: f.Client.ASN, Country: f.Client.Country,
 		RequestHost: f.Request.Host, RequestPath: f.Request.Path, RequestMethod: f.Request.Method,
 		UserAgent: f.Client.UserAgent, RequestQuery: f.Request.Query,
 	}
@@ -215,10 +226,38 @@ func wafSampleFromFlow(f *flow.Flow) wafSample {
 			if sm.CloudflareVerdict == "" || e.Verdict.Action != schema.ActionAllowed {
 				sm.CloudflareVerdict = wafVendorVerdict(e.Verdict.Action)
 				sm.CloudflareRuleID = e.Verdict.RuleID
+				sm.CloudflareRuleName = e.Verdict.RuleName
+			}
+			// Attack scores ride on the edge verdict's reason (any action), on
+			// the INVERTED 1..100 scale. Absent on deployments whose Logpush job
+			// omits them, in which case these stay nil.
+			if sm.AttackScore == nil {
+				sm.AttackScore = wafReasonInt(e.Verdict.ReasonRaw, "WAFAttackScore")
+				sm.SQLiScore = wafReasonInt(e.Verdict.ReasonRaw, "WAFSQLiAttackScore")
+				sm.XSSScore = wafReasonInt(e.Verdict.ReasonRaw, "WAFXSSAttackScore")
+				sm.RCEScore = wafReasonInt(e.Verdict.ReasonRaw, "WAFRCEAttackScore")
 			}
 		}
 	}
 	return sm
+}
+
+// wafReasonInt reads an integer that survived JSON round-tripping (numbers
+// decode to float64) from a verdict reason map. Returns nil when absent, so the
+// console can tell "not scored" from "scored zero".
+func wafReasonInt(reason map[string]any, key string) *int {
+	if reason == nil {
+		return nil
+	}
+	switch v := reason[key].(type) {
+	case float64:
+		n := int(v)
+		return &n
+	case int:
+		return &v
+	default:
+		return nil
+	}
 }
 
 // wafEvaluate tests a candidate Cloudflare expression against a group's real
@@ -278,6 +317,91 @@ func (s *apiServer) wafEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// wafOwasp explains WHY a request trips the WAF: it replays one sample flow's
+// request through the OWASP Core Rule Set and returns the rules that fired, each
+// rule's score contribution, and the anomaly score against the block threshold.
+// Cloudflare's managed OWASP ruleset reports only "949110: anomaly score
+// exceeded" and never which rules built the score — this recovers them, since
+// the managed ruleset IS the Core Rule Set.
+func (s *apiServer) wafOwasp(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FlowID        string `json:"flow_id"`
+		ParanoiaLevel int    `json:"paranoia_level"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, apierrors.InvalidInput("The request body could not be read.", err.Error()))
+		return
+	}
+	if strings.TrimSpace(req.FlowID) == "" {
+		writeError(w, apierrors.InvalidInput("A flow id is required.", "empty flow_id"))
+		return
+	}
+	f, err := s.repo.Get(r.Context(), tenantOf(r), req.FlowID)
+	if err != nil {
+		s.wafErr(w, err)
+		return
+	}
+	if f == nil {
+		writeError(w, apierrors.NotFound("flow not present for this tenant"))
+		return
+	}
+	cfg := s.owaspCfg
+	if req.ParanoiaLevel > 0 {
+		cfg.ParanoiaLevel = req.ParanoiaLevel
+	}
+	captured, note := owaspRequestFromFlow(f)
+	result, err := s.engine.Evaluate(r.Context(), captured, cfg)
+	if err != nil {
+		writeError(w, apierrors.Internal(err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"result":              result,
+		"engine":              s.engine.EngineVersion,
+		"ruleset":             s.engine.RulesetVersion,
+		"reconstruction_note": note,
+	})
+}
+
+// owaspRequestFromFlow rebuilds the request for CRS replay from a correlated
+// flow: method, URI and host/user-agent headers from the denormalized request,
+// plus F5's captured form body where present. It is not the raw wire request —
+// header-dependent rules may read differently — so it returns a note saying so.
+func owaspRequestFromFlow(f *flow.Flow) (owasp.CapturedRequest, string) {
+	uri := f.Request.Path
+	if f.Request.Query != "" {
+		uri += "?" + f.Request.Query
+	}
+	headers := map[string]string{}
+	if f.Request.Host != "" {
+		headers["Host"] = f.Request.Host
+	}
+	if f.Client.UserAgent != "" {
+		headers["User-Agent"] = f.Client.UserAgent
+	}
+	var body []byte
+	for i := range f.Events {
+		e := &f.Events[i]
+		if e.Shape != nil && e.Shape.BodyForm != "" {
+			body = []byte(e.Shape.BodyForm)
+			headers["Content-Type"] = "application/x-www-form-urlencoded"
+			break
+		}
+	}
+	note := "Replayed against the request reconstructed from the correlated flow — method, URI, host and user-agent, plus F5's captured form body where present. Rules that read headers absent from the capture may differ from the edge."
+	if f.HasFlag(schema.FlagBodyTruncated) {
+		note += " The captured body was truncated, so body rules that did not fire are not conclusive."
+	}
+	return owasp.CapturedRequest{
+		ClientIP:      f.Client.IP,
+		Method:        f.Request.Method,
+		URI:           uri,
+		Headers:       headers,
+		Body:          body,
+		BodyTruncated: f.HasFlag(schema.FlagBodyTruncated),
+	}, note
 }
 
 func (s *apiServer) wafErr(w http.ResponseWriter, err error) {

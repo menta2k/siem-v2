@@ -38,6 +38,7 @@ type WafUncoveredGroup struct {
 // service turns it into a reading.
 type WafRuleCounts struct {
 	RuleID     string
+	RuleName   string
 	Correlated int
 	F5Blocked  int
 	F5Flagged  int
@@ -217,7 +218,7 @@ func (r *FlowRepo) WafAgreement(ctx context.Context, tenant, host string, ruleID
 		return nil, false, err
 	}
 	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} %s f5_verdict:* cf_verdict:* (%s)%s `+
-		`| fields host, f5_verdict, cf_matched_rules, _time`,
+		`| fields host, f5_verdict, cf_matched_rules, rule_name, _time`,
 		quote(tenant), quote(string(KindFlow)), wafTimeWindow(from, to), strings.Join(terms, " OR "), hostClause)
 	rows, err := r.client.Query(ctx, r.tenant, q, wafScanCap+1)
 	if err != nil {
@@ -233,6 +234,7 @@ func (r *FlowRepo) WafAgreement(ctx context.Context, tenant, host string, ruleID
 		hostV, _ := row["host"].(string)
 		f5v, _ := row["f5_verdict"].(string)
 		matched, _ := row["cf_matched_rules"].(string)
+		ruleName, _ := row["rule_name"].(string)
 		ts := parseVLTime(row["_time"])
 		for _, rid := range strings.Fields(matched) {
 			if !candidate[rid] {
@@ -242,6 +244,12 @@ func (r *FlowRepo) WafAgreement(ctx context.Context, tenant, host string, ruleID
 			if c == nil {
 				c = &WafRuleCounts{RuleID: rid, Hosts: map[string]bool{}, FirstSeen: ts, LastSeen: ts}
 				byRule[rid] = c
+			}
+			// A log-mode match's rule name is only present when Cloudflare ships
+			// a SecurityRuleDescription; often empty on this deployment, so the
+			// console degrades to the bare id. First non-empty wins.
+			if c.RuleName == "" && ruleName != "" {
+				c.RuleName = ruleName
 			}
 			c.Correlated++
 			switch f5v {

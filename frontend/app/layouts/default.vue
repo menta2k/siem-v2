@@ -31,7 +31,17 @@ const navItems = computed(() => [
   { title: 'Search', icon: 'mdi-magnify', to: '/', visible: true },
   { title: 'Alerts', icon: 'mdi-bell-alert', to: '/alerts', visible: true },
   { title: 'Rule testing', icon: 'mdi-shield-search', to: '/evaluate', visible: true },
-  { title: 'WAF migration', icon: 'mdi-swap-horizontal-bold', to: '/waf-migration/uncovered', visible: role.value === 'admin' || role.value === 'engineer' },
+  {
+    // Three worklists done in order, each ending in a different action —
+    // collapsing them onto one screen would hide that sequence (v1 parity).
+    title: 'WAF migration', icon: 'mdi-swap-horizontal-bold', to: '/waf-migration/uncovered',
+    visible: role.value === 'admin' || role.value === 'engineer',
+    children: [
+      { title: 'Uncovered by CF', icon: 'mdi-shield-off-outline', to: '/waf-migration/uncovered' },
+      { title: 'Ready to enforce', icon: 'mdi-shield-check-outline', to: '/waf-migration/ready' },
+      { title: 'Likely false positives', icon: 'mdi-shield-alert-outline', to: '/waf-migration/false-positives' },
+    ],
+  },
   { title: 'Sources', icon: 'mdi-import', to: '/sources', visible: true },
   { title: 'Traffic profiles', icon: 'mdi-sitemap-outline', to: '/profiles', visible: true },
   { title: 'Feeds', icon: 'mdi-transit-connection-variant', to: '/feeds', visible: role.value === 'admin' || role.value === 'engineer' },
@@ -44,8 +54,11 @@ const navItems = computed(() => [
 const visibleItems = computed(() => navItems.value.filter((i) => i.visible))
 
 const title = computed(() => {
-  const match = navItems.value.find((i) => i.to === route.path)
-  if (match) return match.title
+  for (const item of navItems.value) {
+    const child = item.children?.find((c) => c.to === route.path)
+    if (child) return child.title
+    if (item.to === route.path) return item.title
+  }
   if (route.path.startsWith('/flows/')) return 'Request flow'
   return 'SIEM v2'
 })
@@ -65,13 +78,28 @@ const title = computed(() => {
       <v-divider />
 
       <v-list nav density="compact">
-        <v-list-item
-          v-for="item in visibleItems"
-          :key="item.to"
-          :to="item.to"
-          :prepend-icon="item.icon"
-          :title="item.title"
-        />
+        <template v-for="item in visibleItems" :key="item.to">
+          <!-- A section opens to show its stages; kept open when one is the
+               current page so the reader sees where in the sequence they are. -->
+          <v-list-group v-if="item.children" :value="item.title">
+            <template #activator="{ props: groupProps }">
+              <v-list-item v-bind="groupProps" :prepend-icon="item.icon" :title="item.title" />
+            </template>
+            <v-list-item
+              v-for="child in item.children"
+              :key="child.to"
+              :to="child.to"
+              :prepend-icon="child.icon"
+              :title="child.title"
+            />
+          </v-list-group>
+          <v-list-item
+            v-else
+            :to="item.to"
+            :prepend-icon="item.icon"
+            :title="item.title"
+          />
+        </template>
       </v-list>
 
       <template #append>
