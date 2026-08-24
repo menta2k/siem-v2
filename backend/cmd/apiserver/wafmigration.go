@@ -113,10 +113,35 @@ func (s *apiServer) wafRuleStage(w http.ResponseWriter, r *http.Request, keep ma
 		}
 		rules = append(rules, row)
 	}
+	s.nameWafRules(r, rules)
 	sortWafRules(rules)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rules": rules, "min_correlated": wafMinCorrelated, "truncated": truncated,
 	})
+}
+
+// nameWafRules fills the rule name on any row that lacks one, resolving the ids
+// in a single lookup. The counts query names a rule only when a flow it matched
+// carried the description; this reaches names carried on other flows too.
+func (s *apiServer) nameWafRules(r *http.Request, rules []wafRuleAgreement) {
+	if s.ruleNames == nil {
+		return
+	}
+	ids := make([]string, 0, len(rules))
+	for i := range rules {
+		if rules[i].RuleName == "" {
+			ids = append(ids, rules[i].RuleID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	names := s.ruleNames.Describe(r.Context(), tenantOf(r), ids)
+	for i := range rules {
+		if rules[i].RuleName == "" {
+			rules[i].RuleName = names[rules[i].RuleID]
+		}
+	}
 }
 
 func sortWafRules(rules []wafRuleAgreement) {
@@ -184,7 +209,30 @@ func (s *apiServer) wafSamples(w http.ResponseWriter, r *http.Request) {
 	for _, f := range flows {
 		samples = append(samples, wafSampleFromFlow(f))
 	}
+	s.nameWafSamples(r, samples)
 	writeJSON(w, http.StatusOK, map[string]any{"samples": samples})
+}
+
+// nameWafSamples fills the Cloudflare rule name on samples that carry only an id.
+func (s *apiServer) nameWafSamples(r *http.Request, samples []wafSample) {
+	if s.ruleNames == nil {
+		return
+	}
+	ids := make([]string, 0, len(samples))
+	for i := range samples {
+		if samples[i].CloudflareRuleName == "" && samples[i].CloudflareRuleID != "" {
+			ids = append(ids, samples[i].CloudflareRuleID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	names := s.ruleNames.Describe(r.Context(), tenantOf(r), ids)
+	for i := range samples {
+		if samples[i].CloudflareRuleName == "" {
+			samples[i].CloudflareRuleName = names[samples[i].CloudflareRuleID]
+		}
+	}
 }
 
 // wafVendorVerdict maps a normalized action to the three-word migration vocab.

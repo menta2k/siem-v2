@@ -31,6 +31,7 @@ import (
 	apierrors "github.com/menta2k/siem-v2/backend/internal/errors"
 	"github.com/menta2k/siem-v2/backend/internal/observability"
 	"github.com/menta2k/siem-v2/backend/internal/owasp"
+	"github.com/menta2k/siem-v2/backend/internal/rulenames"
 	"github.com/menta2k/siem-v2/backend/internal/server"
 	"github.com/menta2k/siem-v2/backend/internal/service"
 	"github.com/menta2k/siem-v2/backend/internal/version"
@@ -64,6 +65,7 @@ type apiServer struct {
 	profiles   *service.ProfileService
 	rawRet     *postgres.RawRetentionRepo
 	asnNames   *asnowner.Resolver
+	ruleNames  *rulenames.Resolver
 	vl         *victorialogs.Client
 	vlTenant   victorialogs.Tenant
 	vlHotURL   string
@@ -164,6 +166,10 @@ func run(confPath string, logger *slog.Logger) error {
 	s.filters = &service.FilterService{Repo: postgres.NewFilterRepo(pool)}
 	s.profiles = &service.ProfileService{Repo: postgres.NewProfileRepo(pool)}
 	s.rawRet = postgres.NewRawRetentionRepo(pool)
+	// Rule-name resolution harvests names from the ingested Logpush data — no
+	// Cloudflare API token needed. Degrades to bare ids when a rule was never
+	// seen named.
+	s.ruleNames = rulenames.NewResolver(s.repo, 0)
 
 	if err := s.seedDev(ctx0()); err != nil {
 		return fmt.Errorf("seed: %w", err)
