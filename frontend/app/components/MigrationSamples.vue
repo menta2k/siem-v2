@@ -20,6 +20,9 @@ const props = defineProps<{
 }>()
 const { wafSamples } = useApi()
 const { dateTime } = usePrefs()
+// The flow drawer lives in the layout; opening it shows the full cross-vendor
+// timeline and the raw Cloudflare + F5/WAF records behind this one request.
+const { show: openFlow } = useFlowDrawer()
 const samples = ref<WafSample[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -91,6 +94,14 @@ onMounted(load)
               <WafScore :sample="sm" class="mt-1" />
             </td>
             <td class="text-no-wrap">
+              <v-btn
+                size="x-small"
+                variant="text"
+                prepend-icon="mdi-file-search-outline"
+                @click="openFlow(sm.flow_id)"
+              >
+                Evidence
+              </v-btn>
               <v-btn
                 size="x-small"
                 variant="text"
