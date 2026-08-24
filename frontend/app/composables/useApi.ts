@@ -102,6 +102,53 @@ export interface FlowSearch {
   offset?: number
 }
 
+export interface WafUncoveredGroup {
+  violation: string
+  request_host: string
+  request_method: string
+  requests: number
+  paths: number
+  clients: number
+  cloudflare_allowlisted: number
+  first_seen: string
+  last_seen: string
+}
+export interface WafRuleAgreement {
+  rule_id: string
+  correlated: number
+  f5_blocked: number
+  f5_flagged: number
+  f5_allowed: number
+  hosts: number
+  request_host: string
+  reading: 'ready' | 'disputed' | 'false_positive' | 'insufficient'
+  first_seen: string
+  last_seen: string
+}
+export interface WafSample {
+  flow_id: string
+  event_time: string
+  client_ip: string
+  country: string
+  request_host: string
+  request_path: string
+  request_query: string
+  request_method: string
+  user_agent: string
+  f5_verdict: string
+  f5_violations: string[]
+  cloudflare_verdict: string
+  cloudflare_rule_id: string
+}
+export interface WafSelector {
+  violation?: string
+  rule_id?: string
+  host?: string
+  method?: string
+  f5_verdict?: string
+  cf_verdict?: string
+}
+
 export function useApi() {
   const config = useRuntimeConfig()
   const base = config.public.apiBase
@@ -157,7 +204,23 @@ export function useApi() {
     return await $fetch(`${base}/health/collection`, { headers: headers() })
   }
 
-  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth }
+  async function wafUncovered(params: Record<string, string>) {
+    return await $fetch<{ groups: WafUncoveredGroup[]; truncated: boolean }>(
+      `${base}/waf-migration/uncovered`, { headers: headers(), query: params })
+  }
+  async function wafRules(stage: 'ready' | 'false-positives', params: Record<string, string>) {
+    return await $fetch<{ rules: WafRuleAgreement[]; min_correlated: number; truncated: boolean }>(
+      `${base}/waf-migration/${stage}`, { headers: headers(), query: params })
+  }
+  async function wafSamples(params: Record<string, string>) {
+    return await $fetch<{ samples: WafSample[] }>(
+      `${base}/waf-migration/samples`, { headers: headers(), query: params })
+  }
+  async function wafEvaluate(body: Record<string, unknown>) {
+    return await $fetch(`${base}/waf-migration/evaluate`, { method: 'POST', headers: headers(), body })
+  }
+
+  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth, wafUncovered, wafRules, wafSamples, wafEvaluate }
 }
 
 /** Human label for a layer. */

@@ -31,6 +31,7 @@ const navItems = computed(() => [
   { title: 'Search', icon: 'mdi-magnify', to: '/', visible: true },
   { title: 'Alerts', icon: 'mdi-bell-alert', to: '/alerts', visible: true },
   { title: 'Rule testing', icon: 'mdi-shield-search', to: '/evaluate', visible: true },
+  { title: 'WAF migration', icon: 'mdi-swap-horizontal-bold', to: '/waf-migration/uncovered', visible: role.value === 'admin' || role.value === 'engineer' },
   { title: 'Sources', icon: 'mdi-import', to: '/sources', visible: true },
   { title: 'Traffic profiles', icon: 'mdi-sitemap-outline', to: '/profiles', visible: true },
   { title: 'Feeds', icon: 'mdi-transit-connection-variant', to: '/feeds', visible: role.value === 'admin' || role.value === 'engineer' },
