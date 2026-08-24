@@ -142,8 +142,17 @@ func (r *FlowRepo) WafUncovered(ctx context.Context, tenant, host string, from, 
 	return out, truncated, nil
 }
 
-// WafCandidateRules returns the Cloudflare rule ids observed deciding a request
+// wafMaxCandidates caps how many distinct log-mode rules a run considers.
+const wafMaxCandidates = 200
+
+// WafCandidateRules returns the Cloudflare rule ids observed matching a request
 // in monitor/log mode — the migration candidates, derivable from data alone.
+//
+// A log-mode match does NOT populate the deciding `rule_id` (Cloudflare only
+// sets that for an enforced action); the matched rule appears only in the
+// multi-value `cf_matched_rules`. So candidates are the distinct rule ids
+// exploded from cf_matched_rules over the (rare, bounded) monitored flows,
+// ranked by frequency — not a `stats by (rule_id)`, which would find nothing.
 func (r *FlowRepo) WafCandidateRules(ctx context.Context, tenant, host string, from, to time.Time) ([]string, error) {
 	if !safeValue.MatchString(tenant) || tenant == "" {
 		return nil, &ErrUnsafeValue{Field: "tenant", Value: tenant}
@@ -152,18 +161,34 @@ func (r *FlowRepo) WafCandidateRules(ctx context.Context, tenant, host string, f
 	if err != nil {
 		return nil, err
 	}
-	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} %s cf_verdict:=monitored rule_id:*%s `+
-		`| stats by (rule_id) count() n | sort by (n desc) | limit 200`,
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} %s cf_verdict:=monitored cf_matched_rules:*%s `+
+		`| fields cf_matched_rules`,
 		quote(tenant), quote(string(KindFlow)), wafTimeWindow(from, to), hostClause)
-	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	rows, err := r.client.Query(ctx, r.tenant, q, wafScanCap)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(rows))
+	counts := map[string]int{}
 	for _, row := range rows {
-		if id, _ := row["rule_id"].(string); id != "" && safeValue.MatchString(id) {
-			out = append(out, id)
+		matched, _ := row["cf_matched_rules"].(string)
+		for _, rid := range strings.Fields(matched) {
+			if safeValue.MatchString(rid) {
+				counts[rid]++
+			}
 		}
+	}
+	out := make([]string, 0, len(counts))
+	for id := range counts {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if counts[out[i]] != counts[out[j]] {
+			return counts[out[i]] > counts[out[j]]
+		}
+		return out[i] < out[j]
+	})
+	if len(out) > wafMaxCandidates {
+		out = out[:wafMaxCandidates]
 	}
 	return out, nil
 }
