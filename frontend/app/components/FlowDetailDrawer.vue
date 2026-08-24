@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Flow } from '~/composables/useApi'
+import { layerLabel } from '~/composables/useApi'
 
 /**
  * Flow detail in a drawer rather than a page.
@@ -13,6 +14,40 @@ const { open, flowId } = useFlowDrawer()
 const { getFlow, getFlowRaw, identity } = useApi()
 const { can } = useAuth()
 const flow = ref<Flow | null>(null)
+
+// The layer that actually stopped the request: prefer the terminating event on
+// the recorded terminating layer, else any terminating verdict. Its verdict
+// carries the exact reason a WAF/bot engine blocked.
+const blockingEvent = computed(() => {
+  const f = flow.value
+  if (!f) return null
+  const evs = f.events ?? []
+  return evs.find(e => e.layer === f.terminating_layer && e.verdict?.terminating)
+    ?? evs.find(e => e.verdict?.terminating)
+    ?? null
+})
+const isEnforced = computed(() =>
+  ['blocked', 'challenge_failed', 'rate_limited'].includes(flow.value?.effective_outcome ?? ''))
+
+/** Provider reason (verdict.reason_raw) flattened to display rows, skipping the
+ *  noise and empties. Values that are arrays/objects are stringified. */
+function reasonRows(raw?: Record<string, unknown>): { key: string, value: string }[] {
+  if (!raw) return []
+  const skip = new Set([
+    'field_family', 'parent_ray', 'subrequest_ray', 'source', 'status', 'subrequest_status', 'request_status',
+    // Cloudflare Security* duplicate the structured rule/category shown above.
+    'SecurityAction', 'SecurityActions', 'SecurityRuleDescription', 'SecurityRuleID',
+    'SecurityRuleIDs', 'SecuritySources',
+  ])
+  const rows: { key: string, value: string }[] = []
+  for (const [k, v] of Object.entries(raw)) {
+    if (skip.has(k) || v == null || v === '' || v === 'N/A') continue
+    const value = Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : String(v)
+    if (value.trim() === '' || value === 'N/A') continue
+    rows.push({ key: k.replace(/[_-]+/g, ' '), value })
+  }
+  return rows
+}
 const rawRecords = ref<any[] | null>(null)
 const rawError = ref('')
 const rawLoading = ref(false)
@@ -97,6 +132,60 @@ watch(identity, () => { if (flowId.value && open.value) load(flowId.value) })
                 </tr>
               </tbody>
             </v-table>
+          </v-card-text>
+        </v-card>
+
+        <v-card
+          v-if="blockingEvent || isEnforced" class="mb-4"
+          :color="isEnforced ? 'error' : undefined" variant="tonal"
+          data-test="block-reason"
+        >
+          <v-card-title class="d-flex align-center text-subtitle-2">
+            <v-icon icon="mdi-shield-alert-outline" start size="small" />
+            Why it was {{ flow.effective_outcome === 'challenge_failed' ? 'challenged' : (flow.effective_outcome || 'stopped') }}
+          </v-card-title>
+          <v-card-text>
+            <div v-if="blockingEvent" class="d-flex align-center flex-wrap ga-2 mb-3">
+              <VerdictBadge
+                :action="blockingEvent.verdict.action"
+                :mapped="blockingEvent.verdict.mapped"
+              />
+              <span class="text-body-2">
+                at <strong>{{ layerLabel(blockingEvent.layer) }}</strong>
+                <span class="text-medium-emphasis">({{ blockingEvent.provider }})</span>
+              </span>
+            </div>
+            <div v-else class="text-body-2 mb-2">
+              Outcome <strong>{{ flow.effective_outcome }}</strong><span v-if="flow.terminating_layer"> at {{ layerLabel(flow.terminating_layer) }}</span>.
+            </div>
+
+            <v-table v-if="blockingEvent" density="compact" class="bg-transparent">
+              <tbody>
+                <tr v-if="blockingEvent.verdict.rule_name || blockingEvent.verdict.rule_id">
+                  <td class="text-medium-emphasis" style="width:150px">Rule</td>
+                  <td class="text-break">
+                    {{ blockingEvent.verdict.rule_name || blockingEvent.verdict.rule_id }}
+                    <span v-if="blockingEvent.verdict.rule_name && blockingEvent.verdict.rule_id" class="text-caption text-medium-emphasis">({{ blockingEvent.verdict.rule_id }})</span>
+                  </td>
+                </tr>
+                <tr v-if="blockingEvent.verdict.category">
+                  <td class="text-medium-emphasis">Category</td><td class="text-break">{{ blockingEvent.verdict.category }}</td>
+                </tr>
+                <tr v-if="blockingEvent.verdict.score != null">
+                  <td class="text-medium-emphasis">Score</td><td>{{ blockingEvent.verdict.score }}</td>
+                </tr>
+                <tr v-for="row in reasonRows(blockingEvent.verdict.reason_raw)" :key="row.key">
+                  <td class="text-medium-emphasis text-capitalize">{{ row.key }}</td>
+                  <td class="text-break">{{ row.value }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+            <div
+              v-if="blockingEvent && !blockingEvent.verdict.mapped"
+              class="text-caption text-warning mt-1"
+            >
+              The provider reported a value this system does not recognise; shown verbatim above.
+            </div>
           </v-card-text>
         </v-card>
 

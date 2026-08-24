@@ -14,6 +14,9 @@ export interface Verdict {
   category?: string
   score?: number
   mapped: boolean
+  /** The provider's own reason, verbatim (F5 attack_type/violations/sig_names,
+   *  Cloudflare SecurityRuleDescription, DataDome bot reason, ...). */
+  reason_raw?: Record<string, unknown>
 }
 
 export interface FlowEvent {
