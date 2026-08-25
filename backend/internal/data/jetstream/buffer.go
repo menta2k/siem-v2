@@ -25,13 +25,20 @@ type Buffer struct {
 	maxBytes int64
 }
 
-// Stats is the buffer's current pressure: how much un-consumed backlog the
-// consumer owes, and how full the durable store is against its cap.
+// Stats is the buffer's current pressure. The meaningful pressure signal is the
+// UN-CONSUMED backlog, not the byte fill: a Discard=old stream sits at its byte
+// cap by design (it evicts the oldest, already-consumed message to make room),
+// so bytes/cap is ~1 in healthy steady state and says nothing. What matters is
+// how much of the buffered stream the consumer has NOT processed yet — once
+// that is most of the stream, eviction starts dropping un-consumed data.
 type Stats struct {
-	Pending      int64 // messages the consumer has not yet acked
-	Bytes        int64 // on-disk size of the stream
-	MaxBytes     int64 // configured cap (0 = unlimited)
-	UsedFraction float64
+	Pending  int64 // messages delivered-unacked + not-yet-delivered
+	Msgs     int64 // total messages currently in the stream
+	Bytes    int64 // on-disk size of the stream
+	MaxBytes int64 // configured byte cap (0 = unlimited)
+	// BacklogFraction is Pending/Msgs — the share of the buffered stream still
+	// un-consumed. This, not bytes/cap, is the "approaching data loss" signal.
+	BacklogFraction float64
 }
 
 // Config configures the buffer.
@@ -129,12 +136,12 @@ func (b *Buffer) Stats(durable string) (Stats, error) {
 	if err != nil {
 		return Stats{}, fmt.Errorf("stream info: %w", err)
 	}
-	s := Stats{Bytes: int64(si.State.Bytes), MaxBytes: b.maxBytes}
+	s := Stats{Bytes: int64(si.State.Bytes), MaxBytes: b.maxBytes, Msgs: int64(si.State.Msgs)}
 	if ci, err := b.js.ConsumerInfo(b.stream, durable); err == nil {
 		s.Pending = int64(ci.NumPending) + int64(ci.NumAckPending)
 	}
-	if s.MaxBytes > 0 {
-		s.UsedFraction = float64(s.Bytes) / float64(s.MaxBytes)
+	if s.Msgs > 0 {
+		s.BacklogFraction = float64(s.Pending) / float64(s.Msgs)
 	}
 	return s, nil
 }

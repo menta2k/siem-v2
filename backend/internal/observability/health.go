@@ -195,18 +195,19 @@ func (r *Registry) Overall() HealthState {
 	return StateHealthy
 }
 
-// bufferNearFullFraction is the fill level at which the ingest buffer is treated
-// as under pressure even before the count threshold trips: past this the stream
-// is close enough to its cap that continued backlog will start evicting
-// un-consumed data.
-const bufferNearFullFraction = 0.85
+// bufferBacklogFraction is the share of the buffered stream that may be
+// un-consumed before the ingest buffer is treated as under pressure. Past this,
+// the consumer has fallen so far behind that the oldest un-consumed message is
+// approaching the eviction boundary — data loss is near. (Byte fill is NOT the
+// signal: a Discard=old stream sits at its byte cap in healthy steady state.)
+const bufferBacklogFraction = 0.5
 
 // RecordBufferHealth reflects the durable ingest buffer's pressure as a stage.
-// It is backlogged when the un-consumed depth is high OR the on-disk store is
-// near its cap — either says the consumer is not keeping up and data loss is
-// approaching, which is exactly the condition that went unnoticed on
+// It is backlogged when the un-consumed depth is high in absolute terms OR is a
+// large fraction of the buffered stream — either says the consumer is not
+// keeping up and data loss is approaching, the condition that went unnoticed on
 // 2026-08-25 because nothing surfaced it.
-func (r *Registry) RecordBufferHealth(pending int64, usedFraction float64) {
+func (r *Registry) RecordBufferHealth(pending int64, backlogFraction float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.stages["ingest_buffer"]
@@ -215,7 +216,7 @@ func (r *Registry) RecordBufferHealth(pending int64, usedFraction float64) {
 		r.stages["ingest_buffer"] = st
 	}
 	st.BacklogDepth = pending
-	if pending > r.BacklogThreshold || usedFraction >= bufferNearFullFraction {
+	if pending > r.BacklogThreshold || backlogFraction >= bufferBacklogFraction {
 		st.State = StageBacklogged
 	} else {
 		st.State = StageHealthyState

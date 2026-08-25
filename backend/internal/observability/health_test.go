@@ -152,26 +152,28 @@ func TestSourcesExposesStateForSyncing(t *testing.T) {
 	}
 }
 
-func TestBufferHealthDegradesOnBacklogOrNearFull(t *testing.T) {
+func TestBufferHealthDegradesOnBacklog(t *testing.T) {
 	r := NewRegistry()
-	// Healthy: small backlog, plenty of headroom.
-	r.RecordBufferHealth(1000, 0.30)
+	// Healthy: the consumer is caught up — a tiny un-consumed fraction — even
+	// though a Discard=old stream sits near its byte cap (not a factor here).
+	r.RecordBufferHealth(1000, 0.02)
 	if got := r.Overall(); got != StateHealthy {
-		t.Fatalf("small backlog + low fill should be healthy, got %q", got)
+		t.Fatalf("a caught-up consumer should be healthy, got %q", got)
 	}
-	// Near-full by bytes alone (backlog count still under threshold).
-	r.RecordBufferHealth(1000, 0.90)
+	// Most of the buffered stream is un-consumed: the consumer has fallen behind
+	// and eviction is approaching un-consumed data.
+	r.RecordBufferHealth(30000, 0.6)
 	if got := r.Overall(); got != StateDegraded {
-		t.Errorf("a near-full buffer must degrade the badge, got %q", got)
+		t.Errorf("a large un-consumed fraction must degrade the badge, got %q", got)
 	}
-	// Backlog count over threshold (the consumer has fallen behind).
+	// Absolute backlog over the count threshold, even at a low fraction.
 	r.RecordBufferHealth(r.BacklogThreshold+1, 0.10)
 	if got := r.Overall(); got != StateDegraded {
-		t.Errorf("a high backlog must degrade the badge, got %q", got)
+		t.Errorf("a high absolute backlog must degrade the badge, got %q", got)
 	}
-	// Recovered: back under both thresholds.
-	r.RecordBufferHealth(500, 0.20)
+	// Recovered: consumer caught back up.
+	r.RecordBufferHealth(500, 0.01)
 	if got := r.Overall(); got != StateHealthy {
-		t.Errorf("cleared pressure must return to healthy, got %q", got)
+		t.Errorf("cleared backlog must return to healthy, got %q", got)
 	}
 }

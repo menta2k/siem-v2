@@ -485,14 +485,14 @@ func bufferHealthLoop(ctx context.Context, buffer *jetstream.Buffer,
 			if err != nil {
 				continue // unknown: never raise a false alarm on a transient query error
 			}
-			health.RecordBufferHealth(stats.Pending, stats.UsedFraction)
-			pressured := stats.Pending > health.BacklogThreshold || stats.UsedFraction >= 0.85
+			health.RecordBufferHealth(stats.Pending, stats.BacklogFraction)
+			pressured := stats.Pending > health.BacklogThreshold || stats.BacklogFraction >= 0.5
 			switch {
 			case pressured && !warned:
 				logger.Warn("ingest buffer under pressure",
 					"pending", stats.Pending,
-					"used_fraction", fmt.Sprintf("%.2f", stats.UsedFraction),
-					"bytes", stats.Bytes, "max_bytes", stats.MaxBytes)
+					"backlog_fraction", fmt.Sprintf("%.2f", stats.BacklogFraction),
+					"msgs", stats.Msgs, "bytes", stats.Bytes)
 				warned = true
 			case !pressured && warned:
 				logger.Info("ingest buffer pressure cleared", "pending", stats.Pending)
