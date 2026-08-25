@@ -99,6 +99,10 @@ type Ingest struct {
 	VectorSecretRef  string        `yaml:"vector_secret_ref"`
 	MaxBodyBytes     int64         `yaml:"max_body_bytes"`
 	PullInterval     time.Duration `yaml:"pull_interval"`
+	// CollectionHealthURL is where the apiserver reads the collection tier's
+	// health (logproc's rich /health/collection) to drive the console badge.
+	// Empty falls back to the in-cluster logproc address.
+	CollectionHealthURL string `yaml:"collection_health_url"`
 }
 
 type Correlate struct {
@@ -168,8 +172,9 @@ func Default() *Config {
 			JetStream: JetStream{StreamName: "siem-raw", MaxAgeDays: 7, MaxBytesGiB: 20},
 		},
 		Ingest: Ingest{
-			MaxBodyBytes: 1 << 30, // Logpush max_upload_bytes tops out at 1GB (R4)
-			PullInterval: time.Minute,
+			MaxBodyBytes:        1 << 30, // Logpush max_upload_bytes tops out at 1GB (R4)
+			PullInterval:        time.Minute,
+			CollectionHealthURL: "http://logproc:8100/health/collection",
 		},
 		Correlate: Correlate{
 			LateArrivalWindow: 15 * time.Minute,

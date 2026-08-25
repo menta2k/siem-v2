@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -169,6 +170,7 @@ func run(confPath string, logger *slog.Logger) error {
 	go consume(ctx, buffer, pipeline, health, logger)
 	go flushLoop(ctx, pipeline, logger)
 	go silenceLoop(ctx, health, sourceRepo, logger)
+	go bufferHealthLoop(ctx, buffer, health, logger)
 
 	<-ctx.Done()
 	logger.Info("shutting down")
@@ -348,6 +350,20 @@ func ingestServer(cfg *conf.Config, buffer *jetstream.Buffer,
 		fmt.Fprintf(w, `{"status":%q}`, state)
 	})
 
+	// The rich collection-health snapshot the console badge reads (proxied by the
+	// apiserver). Unlike /health it always returns 200 and the full picture —
+	// sources, stages and overall — so a degraded ingest tier is SHOWN, not
+	// hidden behind a probe failure. This is what the badge lacked when a stalled
+	// consumer went unnoticed for minutes on 2026-08-25.
+	mux.HandleFunc("/health/collection", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"overall": health.Overall(),
+			"sources": health.Sources(),
+			"stages":  health.Stages(),
+		})
+	})
+
 	return &http.Server{
 		Addr:         cfg.Server.HTTPAddr,
 		Handler:      mux,
@@ -445,6 +461,42 @@ func watchdog(ctx context.Context, cancel context.CancelFunc,
 					"idle", idle.String())
 				cancel()
 				return
+			}
+		}
+	}
+}
+
+// bufferHealthLoop polls the durable buffer's backlog and fill level and feeds
+// them into the health registry, so a consumer that has fallen behind or a
+// stream nearing its cap turns the collection-health badge degraded instead of
+// filling silently (the 2026-08-25 blind spot). It also logs a WARN when the
+// buffer is under pressure — a log-based alert for anyone tailing logproc.
+func bufferHealthLoop(ctx context.Context, buffer *jetstream.Buffer,
+	health *observability.Registry, logger *slog.Logger) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	warned := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			stats, err := buffer.Stats("logproc")
+			if err != nil {
+				continue // unknown: never raise a false alarm on a transient query error
+			}
+			health.RecordBufferHealth(stats.Pending, stats.UsedFraction)
+			pressured := stats.Pending > health.BacklogThreshold || stats.UsedFraction >= 0.85
+			switch {
+			case pressured && !warned:
+				logger.Warn("ingest buffer under pressure",
+					"pending", stats.Pending,
+					"used_fraction", fmt.Sprintf("%.2f", stats.UsedFraction),
+					"bytes", stats.Bytes, "max_bytes", stats.MaxBytes)
+				warned = true
+			case !pressured && warned:
+				logger.Info("ingest buffer pressure cleared", "pending", stats.Pending)
+				warned = false
 			}
 		}
 	}

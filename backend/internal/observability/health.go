@@ -180,7 +180,10 @@ func (r *Registry) Overall() HealthState {
 	defer r.mu.RUnlock()
 
 	for _, st := range r.stages {
-		if st.State == StageZeroOutput {
+		// Zero-output is a broken stage; backlogged is a stage that cannot keep
+		// up — the durable buffer filling toward loss, or the consumer stalled.
+		// Both mean results may be incomplete, so both degrade the badge.
+		if st.State == StageZeroOutput || st.State == StageBacklogged {
 			return StateDegraded
 		}
 	}
@@ -190,6 +193,33 @@ func (r *Registry) Overall() HealthState {
 		}
 	}
 	return StateHealthy
+}
+
+// bufferNearFullFraction is the fill level at which the ingest buffer is treated
+// as under pressure even before the count threshold trips: past this the stream
+// is close enough to its cap that continued backlog will start evicting
+// un-consumed data.
+const bufferNearFullFraction = 0.85
+
+// RecordBufferHealth reflects the durable ingest buffer's pressure as a stage.
+// It is backlogged when the un-consumed depth is high OR the on-disk store is
+// near its cap — either says the consumer is not keeping up and data loss is
+// approaching, which is exactly the condition that went unnoticed on
+// 2026-08-25 because nothing surfaced it.
+func (r *Registry) RecordBufferHealth(pending int64, usedFraction float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.stages["ingest_buffer"]
+	if !ok {
+		st = &StageHealth{Stage: "ingest_buffer"}
+		r.stages["ingest_buffer"] = st
+	}
+	st.BacklogDepth = pending
+	if pending > r.BacklogThreshold || usedFraction >= bufferNearFullFraction {
+		st.State = StageBacklogged
+	} else {
+		st.State = StageHealthyState
+	}
 }
 
 // Sources returns a snapshot of source health.

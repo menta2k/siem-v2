@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -66,12 +67,15 @@ type apiServer struct {
 	rawRet     *postgres.RawRetentionRepo
 	asnNames   *asnowner.Resolver
 	ruleNames  *rulenames.Resolver
-	vl         *victorialogs.Client
-	vlTenant   victorialogs.Tenant
-	vlHotURL   string
-	vlWarmURL  string
-	pool       *pgxpool.Pool
-	logger     *slog.Logger
+
+	collectionHealthURL string
+	httpClient          *http.Client
+	vl                  *victorialogs.Client
+	vlTenant            victorialogs.Tenant
+	vlHotURL            string
+	vlWarmURL           string
+	pool                *pgxpool.Pool
+	logger              *slog.Logger
 }
 
 // auditAdapter bridges the audit repository to the server middleware's
@@ -140,22 +144,24 @@ func run(confPath string, logger *slog.Logger) error {
 	logger.Info("postgres ready")
 
 	s := &apiServer{
-		pool:       pool,
-		repo:       victorialogs.NewFlowRepo(vl, tenant).WithRawClient(vlRaw),
-		engine:     engine,
-		owaspCfg:   owaspCfg,
-		health:     observability.NewRegistry(),
-		principals: postgres.NewPrincipalRepo(pool),
-		audit:      postgres.NewAuditRepo(pool),
-		cfRules:    cfrules.New(cfg.Evaluation.WirefilterURL, cfg.Evaluation.Timeout),
-		alerts:     postgres.NewAlertRepo(pool),
-		sources:    postgres.NewSourceRepo(pool),
-		asnNames:   &asnowner.Resolver{Source: postgres.NewASNOwnerRepo(pool)},
-		vl:         vl,
-		vlTenant:   tenant,
-		vlHotURL:   cfg.Storage.VictoriaLogs.Hot,
-		vlWarmURL:  cfg.Storage.VictoriaLogs.Warm,
-		logger:     logger,
+		pool:                pool,
+		repo:                victorialogs.NewFlowRepo(vl, tenant).WithRawClient(vlRaw),
+		engine:              engine,
+		owaspCfg:            owaspCfg,
+		health:              observability.NewRegistry(),
+		principals:          postgres.NewPrincipalRepo(pool),
+		audit:               postgres.NewAuditRepo(pool),
+		cfRules:             cfrules.New(cfg.Evaluation.WirefilterURL, cfg.Evaluation.Timeout),
+		alerts:              postgres.NewAlertRepo(pool),
+		sources:             postgres.NewSourceRepo(pool),
+		asnNames:            &asnowner.Resolver{Source: postgres.NewASNOwnerRepo(pool)},
+		collectionHealthURL: cfg.Ingest.CollectionHealthURL,
+		httpClient:          &http.Client{Timeout: 5 * time.Second},
+		vl:                  vl,
+		vlTenant:            tenant,
+		vlHotURL:            cfg.Storage.VictoriaLogs.Hot,
+		vlWarmURL:           cfg.Storage.VictoriaLogs.Warm,
+		logger:              logger,
 	}
 	authSvc, err := buildAuthService(cfg, pool, logger)
 	if err != nil {
@@ -607,11 +613,43 @@ func (s *apiServer) createEvaluation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// collectionHealth surfaces the INGEST tier's real health for the console badge.
+//
+// Ingest health lives in logproc (source silence, stage output, buffer
+// pressure), not here — this tier only reads. So it proxies logproc's rich
+// /health/collection. If logproc cannot be reached, the collection tier is by
+// definition unhealthy, so it reports degraded with a reason rather than a
+// misleading green: a badge that reads healthy while ingest is down is worse
+// than no badge (the 2026-08-25 blind spot).
 func (s *apiServer) collectionHealth(w http.ResponseWriter, r *http.Request) {
+	url := s.collectionHealthURL
+	if url == "" {
+		url = "http://logproc:8100/health/collection"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err == nil {
+		var resp *http.Response
+		resp, err = s.httpClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var snapshot map[string]any
+				if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&snapshot) == nil {
+					writeJSON(w, http.StatusOK, snapshot)
+					return
+				}
+			}
+			err = fmt.Errorf("collection health status %d", resp.StatusCode)
+		}
+	}
+	s.logger.Warn("collection health unreachable", "error", err, "url", url)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"overall": s.health.Overall(),
-		"sources": s.health.Sources(),
-		"stages":  s.health.Stages(),
+		"overall": observability.StateDegraded,
+		"sources": []any{},
+		"stages":  []any{},
+		"reason":  "The collection tier could not be reached; ingest status is unknown.",
 	})
 }
 

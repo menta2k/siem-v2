@@ -18,9 +18,20 @@ import (
 
 // Buffer implements ingest.Buffer over NATS JetStream.
 type Buffer struct {
-	conn    *nats.Conn
-	js      nats.JetStreamContext
-	subject string
+	conn     *nats.Conn
+	js       nats.JetStreamContext
+	subject  string
+	stream   string
+	maxBytes int64
+}
+
+// Stats is the buffer's current pressure: how much un-consumed backlog the
+// consumer owes, and how full the durable store is against its cap.
+type Stats struct {
+	Pending      int64 // messages the consumer has not yet acked
+	Bytes        int64 // on-disk size of the stream
+	MaxBytes     int64 // configured cap (0 = unlimited)
+	UsedFraction float64
 }
 
 // Config configures the buffer.
@@ -104,7 +115,28 @@ func Connect(cfg Config) (*Buffer, error) {
 		}
 	}
 
-	return &Buffer{conn: conn, js: js, subject: cfg.Subject}, nil
+	return &Buffer{
+		conn: conn, js: js, subject: cfg.Subject,
+		stream: cfg.StreamName, maxBytes: cfg.MaxBytes,
+	}, nil
+}
+
+// Stats reports the buffer's backlog and fill level, for health/alerting. It is
+// best-effort: on any query error it returns the zero Stats and the error, and
+// the caller treats "unknown" as "do not raise a false alarm".
+func (b *Buffer) Stats(durable string) (Stats, error) {
+	si, err := b.js.StreamInfo(b.stream)
+	if err != nil {
+		return Stats{}, fmt.Errorf("stream info: %w", err)
+	}
+	s := Stats{Bytes: int64(si.State.Bytes), MaxBytes: b.maxBytes}
+	if ci, err := b.js.ConsumerInfo(b.stream, durable); err == nil {
+		s.Pending = int64(ci.NumPending) + int64(ci.NumAckPending)
+	}
+	if s.MaxBytes > 0 {
+		s.UsedFraction = float64(s.Bytes) / float64(s.MaxBytes)
+	}
+	return s, nil
 }
 
 // maxMessageBytes bounds one JetStream message, comfortably under NATS's

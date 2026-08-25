@@ -151,3 +151,27 @@ func TestSourcesExposesStateForSyncing(t *testing.T) {
 		t.Fatalf("Sources() must carry the evaluated state, got %+v", list)
 	}
 }
+
+func TestBufferHealthDegradesOnBacklogOrNearFull(t *testing.T) {
+	r := NewRegistry()
+	// Healthy: small backlog, plenty of headroom.
+	r.RecordBufferHealth(1000, 0.30)
+	if got := r.Overall(); got != StateHealthy {
+		t.Fatalf("small backlog + low fill should be healthy, got %q", got)
+	}
+	// Near-full by bytes alone (backlog count still under threshold).
+	r.RecordBufferHealth(1000, 0.90)
+	if got := r.Overall(); got != StateDegraded {
+		t.Errorf("a near-full buffer must degrade the badge, got %q", got)
+	}
+	// Backlog count over threshold (the consumer has fallen behind).
+	r.RecordBufferHealth(r.BacklogThreshold+1, 0.10)
+	if got := r.Overall(); got != StateDegraded {
+		t.Errorf("a high backlog must degrade the badge, got %q", got)
+	}
+	// Recovered: back under both thresholds.
+	r.RecordBufferHealth(500, 0.20)
+	if got := r.Overall(); got != StateHealthy {
+		t.Errorf("cleared pressure must return to healthy, got %q", got)
+	}
+}
