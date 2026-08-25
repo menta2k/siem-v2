@@ -30,9 +30,11 @@ type Config struct {
 	Subject    string
 	MaxAge     time.Duration
 	// MaxBytes caps the stream's on-disk size. With Discard=old, reaching it
-	// drops the oldest (already-processed) message rather than rejecting new
-	// publishes — the difference between a self-healing buffer and an ingest
-	// outage when the JetStream file-store fills.
+	// evicts the OLDEST message (already consumed when the consumer is caught up)
+	// rather than rejecting new publishes — a self-healing buffer, not an ingest
+	// outage. A larger cap buys more headroom for the consumer to be briefly down
+	// without un-consumed data reaching the eviction point. See the Discard note
+	// in Connect for why Discard=new is the wrong lever here.
 	MaxBytes int64
 }
 
@@ -72,7 +74,20 @@ func Connect(cfg Config) (*Buffer, error) {
 		Retention: nats.LimitsPolicy,
 		MaxAge:    cfg.MaxAge,
 		MaxBytes:  cfg.MaxBytes,
-		Discard:   nats.DiscardOld,
+		// Discard=old is the RIGHT choice for this replay buffer, and Discard=new
+		// is a trap here. Retention is LimitsPolicy: messages are kept for MaxAge
+		// regardless of consumption, so with Discard=new a full stream would
+		// reject new publishes until the backlog AGES OUT (7 days) — a permanent
+		// ingest 503, the 2026-08-20 outage. With Discard=old a full stream evicts
+		// the OLDEST message, which is already consumed whenever the consumer is
+		// caught up — so healthy operation loses nothing. The loss window is only
+		// un-consumed messages reaching the eviction point, i.e. the consumer
+		// having fallen 20 GiB behind. The real defence against that is keeping
+		// the consumer alive and caught up (see the supervised consumer in
+		// cmd/logproc), not flipping the discard policy. Deeper protection is a
+		// larger MaxBytes (more outage headroom) — not Discard=new, which needs
+		// WorkQueue retention (immutable here, and it forfeits replay).
+		Discard: nats.DiscardOld,
 	}
 	if _, err = js.AddStream(streamCfg); err != nil {
 		if !isStreamExists(err) {

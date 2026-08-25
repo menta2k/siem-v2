@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -359,22 +360,93 @@ func ingestServer(cfg *conf.Config, buffer *jetstream.Buffer,
 //
 // Acknowledgement is handled by the buffer only after ProcessBatch returns nil,
 // so a processing failure redelivers rather than silently dropping the batch.
+// consumeStallTimeout is how long the consumer may make no progress before the
+// watchdog forces a restart. Comfortably longer than the longest legitimate
+// pause (a large in-flight flush) so it never fires on healthy work, short
+// enough that a real stall is measured in minutes, not hours.
+const consumeStallTimeout = 3 * time.Minute
+
 func consume(ctx context.Context, buffer *jetstream.Buffer,
 	pipeline *flow.Pipeline, health *observability.Registry, logger *slog.Logger) {
 
-	err := buffer.Consume(ctx, "logproc", func(ctx context.Context, batch ingest.RawBatch) error {
+	// lastProgress is stamped every time a batch is processed. The watchdog reads
+	// it to tell a busy consumer from a stalled one.
+	var lastProgress atomic.Int64
+	lastProgress.Store(time.Now().UnixNano())
+
+	process := func(ctx context.Context, batch ingest.RawBatch) error {
 		if err := pipeline.ProcessBatch(ctx, batch); err != nil {
 			logger.Error("process batch failed",
 				"provider", batch.Provider, "batch_id", batch.BatchID, "error", err)
 			return err
 		}
 		health.RecordDelivery(batch.SourceID, len(batch.Records), batch.ReceivedAt)
+		lastProgress.Store(time.Now().UnixNano())
 		logger.Info("batch processed",
 			"provider", batch.Provider, "records", len(batch.Records))
 		return nil
-	})
-	if err != nil && !errors.Is(err, context.Canceled) {
-		logger.Error("buffer consumer stopped", "error", err)
+	}
+
+	// SUPERVISE the consumer instead of running it once. A pull consumer loses
+	// its client-side buffer during a long processing pause ("slow consumer,
+	// messages dropped") and the next fetch errors, or it stops making progress
+	// silently — both happened on 2026-08-25 and each left the consumer dead
+	// until an operator restarted it by hand, while NATS kept discarding the
+	// backlog. The durable keeps its ack floor server-side, so re-subscribing
+	// resumes exactly where it left off with no loss. A watchdog cancels a run
+	// that stops making progress, so a silent stall recovers too.
+	backoff := time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		runCtx, cancel := context.WithCancel(ctx)
+		lastProgress.Store(time.Now().UnixNano())
+		go watchdog(runCtx, cancel, &lastProgress, consumeStallTimeout, logger)
+
+		start := time.Now()
+		err := buffer.Consume(runCtx, "logproc", process)
+		cancel()
+
+		if ctx.Err() != nil {
+			return // parent context cancelled: graceful shutdown, not a stall.
+		}
+		// A run that lasted a while was healthy; reset the backoff so a later
+		// isolated failure retries promptly rather than inheriting a long delay.
+		if time.Since(start) > time.Minute {
+			backoff = time.Second
+		}
+		logger.Error("buffer consumer stopped; restarting",
+			"error", err, "ran", time.Since(start).String(), "backoff", backoff.String())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// watchdog cancels a consumer run that has made no progress for timeout,
+// converting a silent stall into a supervised restart.
+func watchdog(ctx context.Context, cancel context.CancelFunc,
+	lastProgress *atomic.Int64, timeout time.Duration, logger *slog.Logger) {
+	t := time.NewTicker(timeout / 3)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if idle := time.Since(time.Unix(0, lastProgress.Load())); idle > timeout {
+				logger.Error("buffer consumer made no progress; forcing restart",
+					"idle", idle.String())
+				cancel()
+				return
+			}
+		}
 	}
 }
 
