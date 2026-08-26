@@ -45,8 +45,10 @@ const navItems = computed(() => [
   },
   { title: 'Sources', icon: 'mdi-import', to: '/sources', visible: true },
   { title: 'Traffic profiles', icon: 'mdi-sitemap-outline', to: '/profiles', visible: true },
-  { title: 'Feeds', icon: 'mdi-transit-connection-variant', to: '/feeds', visible: role.value === 'admin' || role.value === 'engineer' },
-  { title: 'Ingest filters', icon: 'mdi-filter-remove-outline', to: '/filters', visible: role.value === 'admin' || role.value === 'engineer' },
+  // Feeds and filters are gated on manage_sources server-side, which only
+  // admins hold — so an engineer who saw these got a 403. Nav now matches.
+  { title: 'Feeds', icon: 'mdi-transit-connection-variant', to: '/feeds', visible: role.value === 'admin' },
+  { title: 'Ingest filters', icon: 'mdi-filter-remove-outline', to: '/filters', visible: role.value === 'admin' },
   { title: 'Audit', icon: 'mdi-clipboard-text-clock', to: '/audit', visible: role.value === 'admin' },
   { title: 'Users', icon: 'mdi-account-multiple', to: '/users', visible: role.value === 'admin' },
   { title: 'Settings', icon: 'mdi-cog-outline', to: '/settings', visible: role.value === 'admin' },
