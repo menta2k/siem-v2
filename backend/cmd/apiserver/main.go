@@ -245,6 +245,8 @@ func (s *apiServer) routes() http.Handler {
 	// WAF migration (F5 ASM -> Cloudflare): evidence-only comparison of what F5
 	// blocked vs what Cloudflare did, per correlated request. Reads sit behind
 	// view_flows; the candidate-rule test runs the evaluator (run_evaluation).
+	api.HandleFunc("GET /api/v1/waf-migration/log-mode",
+		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafLogMode))
 	api.HandleFunc("GET /api/v1/waf-migration/uncovered",
 		server.RequirePermission(tenancy.PermViewFlows, audit, s.wafUncovered))
 	api.HandleFunc("GET /api/v1/waf-migration/ready",

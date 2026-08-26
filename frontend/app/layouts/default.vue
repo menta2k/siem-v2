@@ -37,6 +37,7 @@ const navItems = computed(() => [
     title: 'WAF migration', icon: 'mdi-swap-horizontal-bold', to: '/waf-migration/uncovered',
     visible: role.value === 'admin' || role.value === 'engineer',
     children: [
+      { title: 'Log-mode activity', icon: 'mdi-eye-outline', to: '/waf-migration/log-mode' },
       { title: 'Uncovered by CF', icon: 'mdi-shield-off-outline', to: '/waf-migration/uncovered' },
       { title: 'Ready to enforce', icon: 'mdi-shield-check-outline', to: '/waf-migration/ready' },
       { title: 'Likely false positives', icon: 'mdi-shield-alert-outline', to: '/waf-migration/false-positives' },

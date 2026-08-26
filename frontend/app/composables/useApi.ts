@@ -134,6 +134,14 @@ export interface WafRuleAgreement {
   first_seen: string
   last_seen: string
 }
+export interface WafLogModeRule {
+  rule_id: string
+  rule_name?: string
+  matches: number
+  hosts: number
+  first_seen: string
+  last_seen: string
+}
 export interface WafSample {
   flow_id: string
   event_time: string
@@ -251,6 +259,10 @@ export function useApi() {
     return await $fetch<{ rules: WafRuleAgreement[]; min_correlated: number; truncated: boolean }>(
       `${base}/waf-migration/${stage}`, { headers: headers(), query: params })
   }
+  async function wafLogModeRules(params: Record<string, string>) {
+    return await $fetch<{ rules: WafLogModeRule[]; truncated: boolean }>(
+      `${base}/waf-migration/log-mode`, { headers: headers(), query: params })
+  }
   async function wafSamples(params: Record<string, string>) {
     return await $fetch<{ samples: WafSample[] }>(
       `${base}/waf-migration/samples`, { headers: headers(), query: params })
@@ -262,7 +274,7 @@ export function useApi() {
     return await $fetch<WafOwaspResult>(`${base}/waf-migration/owasp`, { method: 'POST', headers: headers(), body })
   }
 
-  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth, wafUncovered, wafRules, wafSamples, wafEvaluate, wafOwasp }
+  return { identity, headers, searchFlows, getFlow, getFlowRaw, evaluate, collectionHealth, wafUncovered, wafRules, wafLogModeRules, wafSamples, wafEvaluate, wafOwasp }
 }
 
 /** Human label for a layer. */

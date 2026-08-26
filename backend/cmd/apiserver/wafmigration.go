@@ -50,6 +50,34 @@ func (s *apiServer) wafUncovered(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"groups": groups, "truncated": truncated})
 }
 
+// wafLogMode lists the Cloudflare rules running in log/monitor mode and how
+// many times each matched over the window — the activity overview for a
+// deployment whose rules are mostly still logging.
+func (s *apiServer) wafLogMode(w http.ResponseWriter, r *http.Request) {
+	from, to := wafWindow(r)
+	rules, truncated, err := s.repo.WafLogModeRules(r.Context(), tenantOf(r), r.URL.Query().Get("host"), from, to)
+	if err != nil {
+		s.wafErr(w, err)
+		return
+	}
+	if s.ruleNames != nil && len(rules) > 0 {
+		ids := make([]string, 0, len(rules))
+		for i := range rules {
+			ids = append(ids, rules[i].RuleID)
+		}
+		names := s.ruleNames.Describe(r.Context(), tenantOf(r), ids)
+		for i := range rules {
+			if rules[i].RuleName == "" {
+				rules[i].RuleName = names[rules[i].RuleID]
+			}
+		}
+	}
+	if rules == nil {
+		rules = []victorialogs.WafLogModeRule{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules, "truncated": truncated})
+}
+
 // wafRuleAgreement is one Cloudflare rule's agreement row on the wire.
 type wafRuleAgreement struct {
 	RuleID      string    `json:"rule_id"`

@@ -62,6 +62,85 @@ func wafHostClause(host string) (string, error) {
 	return " host:=" + quote(host), nil
 }
 
+// WafLogModeRule is one Cloudflare rule running in log/monitor mode and how
+// often it matched over the window — the "what are my log-mode rules doing"
+// overview, independent of any F5 agreement.
+type WafLogModeRule struct {
+	RuleID    string    `json:"rule_id"`
+	RuleName  string    `json:"rule_name,omitempty"`
+	Matches   int       `json:"matches"`
+	Hosts     int       `json:"hosts"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// WafLogModeRules counts, per Cloudflare rule, how many log-mode (monitored)
+// requests it matched. Rule ids are exploded from cf_matched_rules over the
+// (bounded) monitored flows and aggregated in Go, since multi-value fields
+// cannot be stats-by-exploded in LogsQL. Names are resolved by the caller.
+func (r *FlowRepo) WafLogModeRules(ctx context.Context, tenant, host string, from, to time.Time) ([]WafLogModeRule, bool, error) {
+	if !safeValue.MatchString(tenant) || tenant == "" {
+		return nil, false, &ErrUnsafeValue{Field: "tenant", Value: tenant}
+	}
+	hostClause, err := wafHostClause(host)
+	if err != nil {
+		return nil, false, err
+	}
+	q := fmt.Sprintf(`{tenant=%s,record_kind=%s} %s cf_verdict:=monitored cf_matched_rules:*%s `+
+		`| fields host, cf_matched_rules, _time`,
+		quote(tenant), quote(string(KindFlow)), wafTimeWindow(from, to), hostClause)
+	rows, err := r.client.Query(ctx, r.tenant, q, wafScanCap+1)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(rows) > wafScanCap
+	if truncated {
+		rows = rows[:wafScanCap]
+	}
+
+	type agg struct {
+		rule  WafLogModeRule
+		hosts map[string]bool
+	}
+	byRule := map[string]*agg{}
+	for _, row := range rows {
+		hostV, _ := row["host"].(string)
+		matched, _ := row["cf_matched_rules"].(string)
+		ts := parseVLTime(row["_time"])
+		for _, rid := range strings.Fields(matched) {
+			a := byRule[rid]
+			if a == nil {
+				a = &agg{rule: WafLogModeRule{RuleID: rid, FirstSeen: ts, LastSeen: ts}, hosts: map[string]bool{}}
+				byRule[rid] = a
+			}
+			a.rule.Matches++
+			if hostV != "" {
+				a.hosts[hostV] = true
+			}
+			if !ts.IsZero() {
+				if a.rule.FirstSeen.IsZero() || ts.Before(a.rule.FirstSeen) {
+					a.rule.FirstSeen = ts
+				}
+				if ts.After(a.rule.LastSeen) {
+					a.rule.LastSeen = ts
+				}
+			}
+		}
+	}
+	out := make([]WafLogModeRule, 0, len(byRule))
+	for _, a := range byRule {
+		a.rule.Hosts = len(a.hosts)
+		out = append(out, a.rule)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Matches != out[j].Matches {
+			return out[i].Matches > out[j].Matches
+		}
+		return out[i].RuleID < out[j].RuleID
+	})
+	return out, truncated, nil
+}
+
 // WafUncovered returns the coverage gaps: flows F5 blocked and Cloudflare
 // allowed, grouped by (F5 violation, host, method).
 func (r *FlowRepo) WafUncovered(ctx context.Context, tenant, host string, from, to time.Time) ([]WafUncoveredGroup, bool, error) {
