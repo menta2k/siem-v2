@@ -406,31 +406,32 @@ func tenantOf(r *http.Request) string {
 
 func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		From              time.Time `json:"from"`
-		To                time.Time `json:"to"`
-		ClientIP          string    `json:"client_ip"`
-		Host              string    `json:"host"`
-		PathPrefix        string    `json:"path_prefix"`
-		Method            string    `json:"method"`
-		Status            int       `json:"status"`
-		Action            string    `json:"action"`
-		Layer             string    `json:"layer"`
-		RuleID            string    `json:"rule_id"`
-		Country           string    `json:"country"`
-		Provider          string    `json:"provider"`
-		Completeness      string    `json:"completeness"`
-		UserAgent         string    `json:"user_agent"`
-		RayID             string    `json:"ray_id"`
-		SupportID         string    `json:"support_id"`
-		Query             string    `json:"query"`
-		CorrelationMethod string    `json:"correlation_method"`
-		Bridged           *bool     `json:"bridged"`
-		ASN               int       `json:"asn"`
-		MinLayers         int       `json:"min_layers"`
-		MaxLayers         int       `json:"max_layers"`
-		QualityFlag       string    `json:"quality_flag"`
-		Limit             int       `json:"limit"`
-		Offset            int       `json:"offset"`
+		From              time.Time                `json:"from"`
+		To                time.Time                `json:"to"`
+		ClientIP          string                   `json:"client_ip"`
+		Host              string                   `json:"host"`
+		PathPrefix        string                   `json:"path_prefix"`
+		Method            string                   `json:"method"`
+		Status            int                      `json:"status"`
+		Action            string                   `json:"action"`
+		Layer             string                   `json:"layer"`
+		RuleID            string                   `json:"rule_id"`
+		Country           string                   `json:"country"`
+		Provider          string                   `json:"provider"`
+		Completeness      string                   `json:"completeness"`
+		UserAgent         string                   `json:"user_agent"`
+		RayID             string                   `json:"ray_id"`
+		SupportID         string                   `json:"support_id"`
+		Query             string                   `json:"query"`
+		CorrelationMethod string                   `json:"correlation_method"`
+		Bridged           *bool                    `json:"bridged"`
+		ASN               int                      `json:"asn"`
+		MinLayers         int                      `json:"min_layers"`
+		MaxLayers         int                      `json:"max_layers"`
+		QualityFlag       string                   `json:"quality_flag"`
+		Exclusions        []victorialogs.Exclusion `json:"exclusions"`
+		Limit             int                      `json:"limit"`
+		Offset            int                      `json:"offset"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeError(w, apierrors.InvalidInput("The request body could not be read.", err.Error()))
@@ -450,8 +451,8 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 		CorrelationMethod: req.CorrelationMethod,
 		Bridged:           req.Bridged, ASN: req.ASN,
 		MinLayers: req.MinLayers, MaxLayers: req.MaxLayers,
-		HasQualityFlag: req.QualityFlag,
-		Limit:          req.Limit, Offset: req.Offset,
+		HasQualityFlag: req.QualityFlag, Exclusions: req.Exclusions,
+		Limit: req.Limit, Offset: req.Offset,
 	})
 	if err != nil {
 		var unsafe *victorialogs.ErrUnsafeValue

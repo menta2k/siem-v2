@@ -82,6 +82,31 @@ function goto(delta: number) {
   run(false)
 }
 
+// Click-to-filter from a result cell. Include sets the matching single-value
+// filter; exclude accumulates a negated (field, value) that the backend ANDs in.
+function applyInclude(key: string, value: string | number | undefined | null) {
+  if (value === undefined || value === null || value === '') return
+  ;(filters.value as Record<string, unknown>)[key] = value
+  run()
+}
+function applyExclude(field: string, value: string | number | undefined | null) {
+  if (value === undefined || value === null || value === '') return
+  const v = String(value)
+  const list = filters.value.exclusions ?? []
+  if (list.some((e) => e.field === field && e.value === v)) return
+  filters.value.exclusions = [...list, { field, value: v }]
+  run()
+}
+function removeExclusion(i: number) {
+  filters.value.exclusions = (filters.value.exclusions ?? []).filter((_, idx) => idx !== i)
+  run()
+}
+// Friendly labels for the exclusion chips.
+const exclusionFieldLabel: Record<string, string> = {
+  client_ip: 'Client', host: 'Host', path: 'Path',
+  effective_outcome: 'Outcome', terminating_layer: 'Layer', country: 'Country',
+}
+
 // Rendered in the USER'S chosen zone (usePrefs); the stored instant is UTC.
 const eventTime = (iso: string | undefined) => dateTime(iso)
 
@@ -127,6 +152,22 @@ watch(identity, () => run())
               Refresh
             </v-btn>
           </v-card-text>
+
+          <v-card-text
+            v-if="filters.exclusions?.length"
+            class="d-flex align-center flex-wrap ga-1 py-2"
+            data-test="exclusions"
+          >
+            <span class="text-caption text-medium-emphasis mr-1">Excluding:</span>
+            <v-chip
+              v-for="(ex, i) in filters.exclusions" :key="ex.field + ex.value"
+              size="small" variant="tonal" color="error" label closable
+              @click:close="removeExclusion(i)"
+            >
+              <v-icon icon="mdi-filter-minus-outline" start size="x-small" />
+              {{ exclusionFieldLabel[ex.field] ?? ex.field }} = {{ ex.value }}
+            </v-chip>
+          </v-card-text>
           <v-divider />
 
           <v-table data-test="results">
@@ -143,14 +184,47 @@ watch(identity, () => run())
                 @click="openFlow(f.flow_id)"
               >
                 <td class="text-caption text-no-wrap" :title="'first event ' + eventTime(f.first_seen)">{{ eventTime(f.last_seen) }}</td>
-                <td><VerdictBadge :action="f.effective_outcome" /></td>
-                <td class="text-caption">
-                  <span v-if="f.terminating_layer">{{ layerLabel(f.terminating_layer) }}</span>
-                  <span v-else class="text-medium-emphasis">—</span>
+                <td>
+                  <FilterableCell
+                    label="Outcome" :value="f.effective_outcome"
+                    @include="applyInclude('action', f.effective_outcome)"
+                    @exclude="applyExclude('effective_outcome', f.effective_outcome)"
+                  >
+                    <VerdictBadge :action="f.effective_outcome" />
+                  </FilterableCell>
                 </td>
-                <td class="text-caption">{{ f.request?.host }}</td>
-                <td class="text-caption text-truncate" style="max-width:240px">{{ f.request?.path }}</td>
-                <td class="text-caption">{{ f.client?.ip }}</td>
+                <td class="text-caption">
+                  <FilterableCell
+                    label="Terminated at" :value="f.terminating_layer"
+                    @include="applyInclude('layer', f.terminating_layer)"
+                    @exclude="applyExclude('terminating_layer', f.terminating_layer)"
+                  >
+                    {{ f.terminating_layer ? layerLabel(f.terminating_layer) : '' }}
+                  </FilterableCell>
+                </td>
+                <td class="text-caption">
+                  <FilterableCell
+                    label="Host" :value="f.request?.host"
+                    @include="applyInclude('host', f.request?.host)"
+                    @exclude="applyExclude('host', f.request?.host)"
+                  />
+                </td>
+                <td class="text-caption" style="max-width:240px">
+                  <FilterableCell
+                    label="Path" :value="f.request?.path"
+                    @include="applyInclude('path_prefix', f.request?.path)"
+                    @exclude="applyExclude('path', f.request?.path)"
+                  >
+                    <span class="d-inline-block text-truncate" style="max-width:220px; vertical-align:bottom">{{ f.request?.path }}</span>
+                  </FilterableCell>
+                </td>
+                <td class="text-caption">
+                  <FilterableCell
+                    label="Client" :value="f.client?.ip"
+                    @include="applyInclude('client_ip', f.client?.ip)"
+                    @exclude="applyExclude('client_ip', f.client?.ip)"
+                  />
+                </td>
                 <td>
                   <v-chip
                     size="x-small" variant="tonal"

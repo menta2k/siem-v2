@@ -225,3 +225,43 @@ func TestGetFetchesTheNewestVersion(t *testing.T) {
 		t.Fatalf("by-id fetch must pin the newest version: %s", q)
 	}
 }
+
+func TestBuildFlowQueryExclusions(t *testing.T) {
+	q, err := BuildFlowQuery("acme", FlowSearch{
+		Exclusions: []Exclusion{
+			{Field: "client_ip", Value: "1.2.3.4"},
+			{Field: "effective_outcome", Value: "allowed"},
+			{Field: "path", Value: "/health"},
+			{Field: "country", Value: "bg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		`-client_ip:="1.2.3.4"`,
+		`-effective_outcome:="allowed"`,
+		`-path:"/health"*`,
+		`-country:="BG"`, // uppercased before matching
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query %q missing exclusion %q", q, want)
+		}
+	}
+}
+
+func TestBuildFlowQueryRejectsUnknownExcludeField(t *testing.T) {
+	if _, err := BuildFlowQuery("acme", FlowSearch{
+		Exclusions: []Exclusion{{Field: "secret_field", Value: "x"}},
+	}); err == nil {
+		t.Error("negating an arbitrary field must be rejected")
+	}
+}
+
+func TestBuildFlowQueryExcludeUnsafeValueRejected(t *testing.T) {
+	if _, err := BuildFlowQuery("acme", FlowSearch{
+		Exclusions: []Exclusion{{Field: "host", Value: `evil" or x:="y`}},
+	}); err == nil {
+		t.Error("an unsafe exclusion value must be rejected")
+	}
+}

@@ -58,11 +58,24 @@ type FlowSearch struct {
 	// without knowing which id space it belongs to.
 	Query string
 
+	// Exclusions negate a field: "show flows NOT matching this value". They are
+	// how the console's click-to-exclude works — an analyst carves noise out of
+	// a result set (this IP, this outcome) without hand-writing a query. Each is
+	// ANDed as a negated clause; the field is checked against an allowlist so a
+	// caller cannot negate an arbitrary field.
+	Exclusions []Exclusion
+
 	Limit int
 	// Offset is the pagination cursor. Meaningful only because the query sorts
 	// by _time before slicing — an unsorted offset would return an arbitrary,
 	// overlapping subset per page.
 	Offset int
+}
+
+// Exclusion is one negated filter: flows where Field does NOT match Value.
+type Exclusion struct {
+	Field string `json:"field"`
+	Value string `json:"value"`
 }
 
 // safeValue matches values we are willing to embed in a query at all.
@@ -84,6 +97,67 @@ func (e *ErrUnsafeValue) Error() string {
 //
 // The record_kind and tenant filters are added unconditionally and first, so
 // every generated query is scoped whether or not the caller supplied anything.
+// excludeKinds is the allowlist of fields the console may negate, each with how
+// its value becomes a clause. Anything not here is rejected — a caller must not
+// be able to negate an arbitrary indexed field.
+var excludeKinds = map[string]string{
+	"client_ip":         "exact",
+	"host":              "exact",
+	"effective_outcome": "exact",
+	"terminating_layer": "exact",
+	"country":           "upper", // stored uppercase
+	"method":            "upper",
+	"rule_id":           "exact",
+	"provider":          "word", // matched against the space-joined providers list
+	"path":              "prefix",
+	"asn":               "num",
+	"status":            "num",
+}
+
+// excludeClause turns one allowlisted (field, value) into a negated LogsQL
+// clause. An empty value is a no-op; an unknown field or unsafe value is an
+// error, mirroring the validation the positive filters get.
+func excludeClause(field, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	kind, ok := excludeKinds[field]
+	if !ok {
+		return "", &ErrUnsafeValue{Field: "exclude_field", Value: field}
+	}
+	switch kind {
+	case "num":
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return "", &ErrUnsafeValue{Field: field, Value: value}
+		}
+		fld := field
+		if field == "asn" {
+			fld = "asn"
+		}
+		return fmt.Sprintf("-%s:=%d", fld, n), nil
+	case "prefix":
+		if !safeValue.MatchString(value) {
+			return "", &ErrUnsafeValue{Field: field, Value: value}
+		}
+		return fmt.Sprintf("-path:%s*", quote(value)), nil
+	case "word":
+		if !safeValue.MatchString(value) {
+			return "", &ErrUnsafeValue{Field: field, Value: value}
+		}
+		return fmt.Sprintf("-providers:%s", quote(value)), nil
+	default: // exact / upper
+		v := value
+		if kind == "upper" {
+			v = strings.ToUpper(v)
+		}
+		if !safeValue.MatchString(v) {
+			return "", &ErrUnsafeValue{Field: field, Value: v}
+		}
+		return fmt.Sprintf("-%s:=%s", field, quote(v)), nil
+	}
+}
+
 func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 	if !safeValue.MatchString(tenant) || tenant == "" {
 		return "", &ErrUnsafeValue{Field: "tenant", Value: tenant}
@@ -190,6 +264,16 @@ func BuildFlowQuery(tenant string, s FlowSearch) (string, error) {
 			return "", &ErrUnsafeValue{Field: "user_agent", Value: s.UserAgentSub}
 		}
 		parts = append(parts, fmt.Sprintf("user_agent:~%s", quote(s.UserAgentSub)))
+	}
+
+	for _, ex := range s.Exclusions {
+		clause, err := excludeClause(ex.Field, ex.Value)
+		if err != nil {
+			return "", err
+		}
+		if clause != "" {
+			parts = append(parts, clause)
+		}
 	}
 
 	if s.Offset < 0 {

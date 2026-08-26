@@ -59,6 +59,10 @@ export interface RawRecord {
   masked_fields?: string[]
 }
 
+export interface FlowExclusion {
+  field: string
+  value: string
+}
 export interface FlowSearch {
   from?: string
   to?: string
@@ -97,6 +101,10 @@ export interface FlowSearch {
   min_layers?: number
   max_layers?: number
   quality_flag?: string
+  /** The terminating layer to include, e.g. app_firewall. */
+  layer?: string
+  /** Negated filters — flows where field does NOT equal value (click-to-exclude). */
+  exclusions?: FlowExclusion[]
   limit?: number
   /** Pagination cursor: results are ordered newest-first server-side. */
   offset?: number
