@@ -29,6 +29,12 @@ const blockingEvent = computed(() => {
 const isEnforced = computed(() =>
   ['blocked', 'challenge_failed', 'rate_limited'].includes(flow.value?.effective_outcome ?? ''))
 
+// The single most common point of confusion: a DataDome block. DataDome runs as
+// a Cloudflare Worker at the edge, so the 403 is served BY Cloudflare while the
+// DECISION was DataDome's — and Cloudflare's own WAF (a separate layer) may have
+// allowed the request. Surface a plain-words note whenever that is the case.
+const terminatedAtDataDome = computed(() => blockingEvent.value?.layer === 'bot_management')
+
 /** Provider reason (verdict.reason_raw) flattened to display rows, skipping the
  *  noise and empties. Values that are arrays/objects are stringified. */
 function reasonRows(raw?: Record<string, unknown>): { key: string, value: string }[] {
@@ -158,6 +164,23 @@ watch(identity, () => { if (flowId.value && open.value) load(flowId.value) })
             <div v-else class="text-body-2 mb-2">
               Outcome <strong>{{ flow.effective_outcome }}</strong><span v-if="flow.terminating_layer"> at {{ layerLabel(flow.terminating_layer) }}</span>.
             </div>
+
+            <!-- The "blocked by Cloudflare but terminated at DataDome" explainer. -->
+            <v-alert
+              v-if="terminatedAtDataDome" density="compact" variant="tonal" color="info"
+              class="text-caption mb-3" data-test="datadome-note"
+            >
+              <div class="d-flex ga-2">
+                <v-icon icon="mdi-information-outline" size="small" />
+                <div>
+                  <strong>DataDome runs as a Cloudflare Worker</strong>, at the edge — so the 403 was
+                  served <em>by Cloudflare</em>, but the block was <em>DataDome's</em> decision.
+                  Cloudflare's own WAF is a separate layer (see the timeline) and did not block this
+                  request; the request reached DataDome precisely because Cloudflare's WAF let it
+                  through. It never went on to F5 or the origin.
+                </div>
+              </div>
+            </v-alert>
 
             <v-table v-if="blockingEvent" density="compact" class="bg-transparent">
               <tbody>
