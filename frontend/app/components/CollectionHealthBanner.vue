@@ -10,15 +10,31 @@
 const props = defineProps<{ compact?: boolean }>()
 
 const { collectionHealth } = useApi()
+const { refresh: refreshSession } = useAuth()
 const health = ref<any>(null)
 const failed = ref(false)
+// A single failed poll is usually a stale access token or a transient blip, not
+// a real problem — so recover quietly and only alarm after it keeps failing,
+// rather than flashing "could not be read" every time the token turns over.
+let failCount = 0
 
 async function refresh() {
   try {
     health.value = await collectionHealth()
+    failCount = 0
     failed.value = false
   } catch {
-    failed.value = true
+    // Most likely an expired token: refresh once and retry before alarming.
+    if (await refreshSession()) {
+      try {
+        health.value = await collectionHealth()
+        failCount = 0
+        failed.value = false
+        return
+      } catch { /* fall through to the failure counter */ }
+    }
+    failCount += 1
+    failed.value = failCount >= 2 // keep the last-known health until it's clearly broken
   }
 }
 onMounted(() => {

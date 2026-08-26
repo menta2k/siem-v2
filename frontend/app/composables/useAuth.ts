@@ -22,12 +22,40 @@ export interface SessionUser {
  */
 const SIGNED_OUT_KEY = 'siem.signedOut'
 
+// One refresh at a time. The refresh endpoint ROTATES the refresh cookie, so two
+// concurrent refreshes race — the second presents a token the first just rotated
+// away and gets a 401, logging the tab out. When several expired-token requests
+// (or a scheduled refresh and a user action) trigger a refresh at once, they must
+// all await the SAME in-flight refresh. Module scope makes it a client singleton.
+let refreshInFlight: Promise<boolean> | null = null
+
+/** The `exp` (unix seconds) of a JWT, or null if it cannot be read. */
+function jwtExp(token: string): number | null {
+  try {
+    const payload = token.split('.')[1]
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof json.exp === 'number' ? json.exp : null
+  } catch {
+    return null
+  }
+}
+
 export function useAuth() {
   const config = useRuntimeConfig()
   const base = config.public.apiBase
 
   const accessToken = useState<string | null>('auth-access', () => null)
+  // The access token's expiry (unix seconds), tracked so a background scheduler
+  // can refresh it BEFORE it lapses instead of every request failing once it has.
+  const tokenExp = useState<number | null>('auth-exp', () => null)
   const user = useState<SessionUser | null>('auth-user', () => null)
+
+  // Sets the in-memory session from a login/refresh response, recording the
+  // token's expiry so the refresh can be scheduled ahead of it.
+  function setAccess(token: string) {
+    accessToken.value = token
+    tokenExp.value = jwtExp(token)
+  }
   const challengeToken = useState<string | null>('auth-challenge', () => null)
   const provisioningUri = useState<string | null>('auth-enroll-uri', () => null)
 
@@ -66,7 +94,7 @@ export function useAuth() {
       method: 'POST', body: { email, password }, credentials: 'include',
     })
     if (res.access_token) {
-      accessToken.value = res.access_token
+      setAccess(res.access_token)
       user.value = res.user
       challengeToken.value = null
       provisioningUri.value = null
@@ -85,7 +113,7 @@ export function useAuth() {
       body: { challenge_token: challengeToken.value, code },
       credentials: 'include',
     })
-    accessToken.value = res.access_token
+    setAccess(res.access_token)
     user.value = res.user
     challengeToken.value = null
     provisioningUri.value = null
@@ -99,16 +127,23 @@ export function useAuth() {
    */
   async function refresh(): Promise<boolean> {
     if (isSignedOut()) return false
-    try {
-      const res: any = await $fetch(`${base}/auth/refresh`, {
-        method: 'POST', credentials: 'include',
-      })
-      accessToken.value = res.access_token
-      user.value = res.user
-      return true
-    } catch {
-      return false
-    }
+    // Coalesce concurrent refreshes onto one request (see refreshInFlight).
+    if (refreshInFlight) return refreshInFlight
+    refreshInFlight = (async () => {
+      try {
+        const res: any = await $fetch(`${base}/auth/refresh`, {
+          method: 'POST', credentials: 'include',
+        })
+        setAccess(res.access_token)
+        user.value = res.user
+        return true
+      } catch {
+        return false
+      } finally {
+        refreshInFlight = null
+      }
+    })()
+    return refreshInFlight
   }
 
   async function logout() {
@@ -120,13 +155,14 @@ export function useAuth() {
       // in; the local session is cleared regardless and the marker holds.
     }
     accessToken.value = null
+    tokenExp.value = null
     user.value = null
     challengeToken.value = null
     provisioningUri.value = null
   }
 
   return {
-    accessToken, user, isAuthenticated, awaitingMfa, enrolling, provisioningUri,
+    accessToken, tokenExp, user, isAuthenticated, awaitingMfa, enrolling, provisioningUri,
     can, login, verifyMfa, refresh, logout,
   }
 }
