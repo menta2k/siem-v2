@@ -293,8 +293,127 @@ func (r *FlowRepo) Get(ctx context.Context, tenant, flowID string) (*flow.Flow, 
 	return decodeFlow(rows[0])
 }
 
+// idLookupSpans are the widening lookback steps for an identifier search. Each
+// step scans only the slice of time the previous one did not, so a ray from the
+// last hour costs one hour of bloom-filter reads instead of the whole store.
+var idLookupSpans = []time.Duration{
+	time.Hour, 24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour, 90 * 24 * time.Hour,
+}
+
+// idLookupMargin widens the window a hit was found in, so a flow split across
+// a window boundary (several versions or fragments of the same request) comes
+// back whole rather than missing the part that fell in the neighbouring window.
+const idLookupMargin = time.Hour
+
+// idLookupBudget caps the whole widening lookup. It sits under the API server's
+// 30s write timeout, so a ray that matches nothing returns a clear "ran out of
+// time" answer instead of the connection being dropped mid-scan. A var so tests
+// can shrink it.
+var idLookupBudget = 25 * time.Second
+
+// epoch stands in for "unbounded in the past": BuildFlowQuery applies a time
+// range only when both ends are set.
+var epoch = time.Unix(0, 0).UTC()
+
+// ErrLookupTimeout is returned when an identifier lookup spends its budget
+// before finding a match. SearchedFrom is how far back it got with no hit, so
+// the caller can tell the operator which range was covered.
+type ErrLookupTimeout struct{ SearchedFrom time.Time }
+
+func (e *ErrLookupTimeout) Error() string {
+	return fmt.Sprintf("identifier lookup ran out of time; no match since %s",
+		e.SearchedFrom.UTC().Format(time.RFC3339))
+}
+
+// idLookupWindows splits [from, to] into newest-first, non-overlapping windows
+// following idLookupSpans. A zero from or to means unbounded on that side; the
+// final window then reaches back to the epoch so nothing older is skipped.
+func idLookupWindows(now, from, to time.Time) [][2]time.Time {
+	if to.IsZero() || to.After(now) {
+		to = now
+	}
+	if from.IsZero() {
+		from = epoch
+	}
+	var out [][2]time.Time
+	upper := to
+	for _, span := range idLookupSpans {
+		lower := to.Add(-span)
+		if !lower.After(from) {
+			break
+		}
+		out = append(out, [2]time.Time{lower, upper})
+		upper = lower
+	}
+	return append(out, [2]time.Time{from, upper})
+}
+
+// isIDLookup reports whether a search is a point lookup on an identifier: the
+// result is a handful of flows for one request, so it can stop at the first
+// time window that finds anything. Later pages fall back to one full-range
+// query so offsets stay consistent.
+func isIDLookup(s FlowSearch) bool {
+	return (s.RayID != "" || s.VendorRequestID != "" || s.Query != "") && s.Offset == 0
+}
+
 // Search returns flows matching a typed search.
+//
+// An identifier lookup (ray, vendor id, quick-find) runs newest-first over
+// widening time windows and stops at the first window that matches. Without
+// this, "Any time" sends no _time bound and VictoriaLogs must read the id
+// columns' bloom filters across every partition in retention, which is what
+// made ray searches time out, even though nearly every lookup is for a request
+// from the last hour or day.
 func (r *FlowRepo) Search(ctx context.Context, tenant string, s FlowSearch) ([]*flow.Flow, error) {
+	if !isIDLookup(s) {
+		return r.search(ctx, tenant, s)
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, idLookupBudget)
+	defer cancel()
+	now := time.Now().UTC()
+	searchedFrom := now
+	for _, w := range idLookupWindows(now, s.From, s.To) {
+		ws := s
+		ws.From, ws.To = w[0], w[1]
+		out, err := r.search(lookupCtx, tenant, ws)
+		if err != nil {
+			// Our budget expiring is an answer ("nothing since X"), not a
+			// failure; the caller's own cancellation still surfaces as is.
+			if lookupCtx.Err() != nil && ctx.Err() == nil {
+				return nil, &ErrLookupTimeout{SearchedFrom: searchedFrom}
+			}
+			return nil, err
+		}
+		searchedFrom = w[0]
+		if len(out) == 0 {
+			continue
+		}
+		// Re-run over the hit window widened by a margin on both sides (clamped
+		// to the caller's range), so a flow straddling a boundary comes back
+		// complete.
+		lo, hi := w[0].Add(-idLookupMargin), w[1].Add(idLookupMargin)
+		if lo.Before(epoch) {
+			lo = epoch
+		}
+		if !s.From.IsZero() && lo.Before(s.From) {
+			lo = s.From
+		}
+		if !s.To.IsZero() && hi.After(s.To) {
+			hi = s.To
+		}
+		ws.From, ws.To = lo, hi
+		widened, err := r.search(lookupCtx, tenant, ws)
+		if err != nil && lookupCtx.Err() != nil && ctx.Err() == nil {
+			// Out of budget on the widening pass: the hit itself is still a
+			// correct answer, just possibly missing a fragment across the edge.
+			return out, nil
+		}
+		return widened, err
+	}
+	return []*flow.Flow{}, nil
+}
+
+func (r *FlowRepo) search(ctx context.Context, tenant string, s FlowSearch) ([]*flow.Flow, error) {
 	q, err := BuildFlowQuery(tenant, s)
 	if err != nil {
 		return nil, err

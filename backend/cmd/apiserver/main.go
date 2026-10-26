@@ -463,6 +463,13 @@ func (s *apiServer) searchFlows(w http.ResponseWriter, r *http.Request) {
 				"One or more search values contain unsupported characters.", err.Error()))
 			return
 		}
+		var timeout *victorialogs.ErrLookupTimeout
+		if errors.As(err, &timeout) {
+			writeError(w, apierrors.Unavailable(fmt.Sprintf(
+				"No match since %s; the search ran out of time before reaching older data. Set a time range to search further back.",
+				timeout.SearchedFrom.UTC().Format(time.RFC3339)), err.Error()))
+			return
+		}
 		s.logger.Error("flow search failed", "error", err)
 		writeError(w, apierrors.Internal(err.Error()))
 		return
