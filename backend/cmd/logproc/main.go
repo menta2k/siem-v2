@@ -168,20 +168,39 @@ func run(confPath string, logger *slog.Logger) error {
 	}()
 
 	go consume(ctx, buffer, pipeline, health, logger)
-	go flushLoop(ctx, pipeline, logger)
+	flushDone := make(chan struct{})
+	go func() {
+		defer close(flushDone)
+		flushLoop(ctx, pipeline, logger)
+	}()
 	go silenceLoop(ctx, health, sourceRepo, logger)
 	go bufferHealthLoop(ctx, buffer, health, logger)
 
 	<-ctx.Done()
 	logger.Info("shutting down")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	// Each shutdown step has its OWN budget. They used to share one 15s
+	// context: a slow final flush spent all of it, the correlation-state save
+	// then failed with "context deadline exceeded", and every open flow was
+	// lost on restart. The budgets sum to 55s, inside the compose
+	// stop_grace_period of 60s.
+	//
+	// First let the loop's current flush finish: its flows have already left
+	// the window, so cutting its store short loses them.
+	select {
+	case <-flushDone:
+	case <-time.After(shutdownLoopFlushBudget):
+		logger.Warn("periodic flush still running at shutdown; continuing")
+	}
 	// Draining in-flight flows on shutdown means a restart resumes from a clean
 	// point rather than replaying the tail unnecessarily.
-	if n, err := pipeline.Flush(shutdownCtx); err == nil && n > 0 {
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), shutdownFlushBudget)
+	if n, err := pipeline.Flush(flushCtx); err != nil {
+		logger.Warn("final flush incomplete", "stored", n, "error", err)
+	} else if n > 0 {
 		logger.Info("flushed flows during shutdown", "count", n)
 	}
+	cancelFlush()
 	// Persist whatever remains open so the next boot resumes it (FR-023).
 	if corrState != nil {
 		idx, rev := pipeline.IdentifierIndex()
@@ -191,15 +210,28 @@ func run(confPath string, logger *slog.Logger) error {
 			IDIndex:    idx,
 			KeyIDs:     rev,
 		}
-		if err := corrState.Save(shutdownCtx, snap); err != nil {
+		saveCtx, cancelSave := context.WithTimeout(context.Background(), shutdownSaveBudget)
+		if err := corrState.Save(saveCtx, snap); err != nil {
 			logger.Warn("could not persist correlation state", "error", err)
 		} else {
 			logger.Info("persisted correlation state",
 				"window", len(snap.Window), "recent_keys", len(snap.RecentKeys))
 		}
+		cancelSave()
 	}
-	return srv.Shutdown(shutdownCtx)
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), shutdownHTTPBudget)
+	defer cancelHTTP()
+	return srv.Shutdown(httpCtx)
 }
+
+// Shutdown step budgets; see the shutdown sequence in run. Their sum (55s)
+// must stay under the compose stop_grace_period (60s).
+const (
+	shutdownLoopFlushBudget = 15 * time.Second
+	shutdownFlushBudget     = 15 * time.Second
+	shutdownSaveBudget      = 20 * time.Second
+	shutdownHTTPBudget      = 5 * time.Second
+)
 
 func buildPipeline(vl, vlRaw *victorialogs.Client, tenant victorialogs.Tenant,
 	cfg *conf.Config, health *observability.Registry, logger *slog.Logger) *flow.Pipeline {
@@ -511,7 +543,10 @@ func flushLoop(ctx context.Context, pipeline *flow.Pipeline, logger *slog.Logger
 			return
 		case <-ticker.C:
 			pipeline.Correlate()
-			n, err := pipeline.Flush(ctx)
+			// Not cancelled by shutdown: Flush has already taken its flows out
+			// of the window, so aborting the store mid-way loses them. Shutdown
+			// waits for this iteration instead (shutdownLoopFlushBudget).
+			n, err := pipeline.Flush(context.WithoutCancel(ctx))
 			if err != nil {
 				logger.Error("flush failed", "error", err)
 				continue
