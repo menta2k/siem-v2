@@ -196,3 +196,72 @@ func TestCrossCycleBridgeJoinsOriginAndEdge(t *testing.T) {
 		t.Fatalf("origin and edge must collapse into ONE in-flight flow, got %d", got)
 	}
 }
+
+// rangeStore is a mergeStore whose loader also offers the bounded lookup; it
+// records the range asked for and fails the test if the unbounded Get is used.
+type rangeStore struct {
+	*mergeStore
+	t        *testing.T
+	from, to time.Time
+	calls    int
+}
+
+func (r *rangeStore) Get(context.Context, string, string) (*Flow, error) {
+	r.t.Fatal("straggler merge used the unbounded Get although GetInRange is available")
+	return nil, nil
+}
+
+func (r *rangeStore) GetInRange(_ context.Context, _, flowID string, from, to time.Time) (*Flow, error) {
+	r.calls++
+	r.from, r.to = from, to
+	return r.byID[flowID], nil
+}
+
+// TestStragglerMergeUsesBoundedLookup: the merge must look its predecessor up
+// within a range around the straggler's own times. An unbounded lookup checks
+// all retention (~1s each in production) and, run serially in Flush, stalled
+// flow production once nginx traffic added thousands of stragglers an hour.
+func TestStragglerMergeUsesBoundedLookup(t *testing.T) {
+	store := &mergeStore{byID: map[string]*Flow{}}
+	loader := &rangeStore{mergeStore: store, t: t}
+	w := window.New(window.Options{LateArrival: 10 * time.Millisecond, ExpectedLayers: 2})
+	p := NewPipeline(store, &ingest.MemoryDeadLetter{}, w)
+	p.ExpectedLayers = []schema.Layer{schema.LayerOrigin, schema.LayerEdge}
+	p.Loader = loader
+	p.Register(nginx.New())
+	p.Register(cloudflare.New())
+
+	ray := "aaaabbbbcccc0002"
+	flush := func(provider schema.Provider, line string) {
+		t.Helper()
+		if err := p.ProcessBatch(t.Context(), ingest.RawBatch{
+			Provider: provider, Tenant: "acme", SourceID: "s1", Records: [][]byte{[]byte(line)},
+		}); err != nil {
+			t.Fatalf("%s batch: %v", provider, err)
+		}
+		p.Correlate()
+		time.Sleep(20 * time.Millisecond)
+		if _, err := p.Flush(t.Context()); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	}
+	flush(schema.ProviderNginx, `{"time_iso8601":"2026-08-20T08:00:00+03:00","cf_ray":"`+ray+`-SOF","request_uri":"/x","request_method":"GET","status":200,"host":"w.example.com","remote_addr":"1.2.3.4"}`)
+	var stored *Flow
+	for _, v := range store.byID {
+		stored = v
+	}
+	flush(schema.ProviderCloudflare, `{"RayID":"`+ray+`","ParentRayID":"00","EdgeStartTimestamp":"2026-08-20T05:00:00Z","ClientIP":"5.6.7.8","ClientRequestHost":"w.example.com","ClientRequestURI":"/x","ClientRequestMethod":"GET","EdgeResponseStatus":200}`)
+
+	if loader.calls != 1 {
+		t.Fatalf("want one bounded lookup, got %d", loader.calls)
+	}
+	if stored.FirstSeen.Before(loader.from) || stored.FirstSeen.After(loader.to) {
+		t.Fatalf("lookup range [%v, %v] misses the stored flow at %v", loader.from, loader.to, stored.FirstSeen)
+	}
+	if span := loader.to.Sub(loader.from); span > 24*time.Hour {
+		t.Fatalf("lookup range must be a narrow slice of retention, spans %v", span)
+	}
+	if len(store.byID) != 1 {
+		t.Fatalf("the late provider must still AMEND, flows stored: %d", len(store.byID))
+	}
+}

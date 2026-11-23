@@ -265,3 +265,19 @@ func TestBuildFlowQueryExcludeUnsafeValueRejected(t *testing.T) {
 		t.Error("an unsafe exclusion value must be rejected")
 	}
 }
+
+func TestFlowByIDInRangeQueryIsTimeBoundedAndScoped(t *testing.T) {
+	from := time.Date(2026, 11, 23, 4, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 11, 23, 16, 0, 0, 0, time.UTC)
+	q, err := BuildFlowByIDInRangeQuery("acme", "flow:ray:abc", from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{tenant="acme",record_kind="flow"} _time:[2026-11-23T04:00:00Z, 2026-11-23T16:00:00Z] flow_id:="flow:ray:abc" | sort by (_time desc) | limit 1`
+	if q != want {
+		t.Fatalf("got  %s\nwant %s", q, want)
+	}
+	if _, err := BuildFlowByIDInRangeQuery("acme", `x" or flow_id:="y`, from, to); err == nil {
+		t.Fatal("an unsafe flow id must be refused")
+	}
+}

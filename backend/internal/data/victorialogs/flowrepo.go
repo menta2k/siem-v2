@@ -293,6 +293,24 @@ func (r *FlowRepo) Get(ctx context.Context, tenant, flowID string) (*flow.Flow, 
 	return decodeFlow(rows[0])
 }
 
+// GetInRange is Get restricted to flows whose time falls in [from, to]. The
+// ingest-side straggler merge uses it: it knows roughly when the flow it is
+// looking for began, and an unbounded Get there serialized the flush loop.
+func (r *FlowRepo) GetInRange(ctx context.Context, tenant, flowID string, from, to time.Time) (*flow.Flow, error) {
+	q, err := BuildFlowByIDInRangeQuery(tenant, flowID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.client.Query(ctx, r.tenant, q, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return decodeFlow(rows[0])
+}
+
 // idLookupSpans are the widening lookback steps for an identifier search. Each
 // step scans only the slice of time the previous one did not, so a ray from the
 // last hour costs one hour of bloom-filter reads instead of the whole store.

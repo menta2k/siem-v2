@@ -308,6 +308,19 @@ func BuildFlowByIDQuery(tenant, flowID string) (string, error) {
 		quote(tenant), quote(string(KindFlow)), quote(flowID)), nil
 }
 
+// BuildFlowByIDInRangeQuery is BuildFlowByIDQuery bounded to [from, to], so
+// the lookup reads only the partitions in that range instead of all retention.
+func BuildFlowByIDInRangeQuery(tenant, flowID string, from, to time.Time) (string, error) {
+	q, err := BuildFlowByIDQuery(tenant, flowID)
+	if err != nil {
+		return "", err
+	}
+	stream := fmt.Sprintf(`{tenant=%s,record_kind=%s} `, quote(tenant), quote(string(KindFlow)))
+	bound := fmt.Sprintf("_time:[%s, %s] ",
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+	return stream + bound + strings.TrimPrefix(q, stream), nil
+}
+
 // quote wraps a value in LogsQL double quotes, escaping backslashes and quotes.
 // Values reaching here have already passed the whitelist; this is defence in
 // depth rather than the primary control.

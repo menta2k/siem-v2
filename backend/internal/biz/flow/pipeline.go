@@ -565,11 +565,34 @@ type RawItem struct {
 // this map growing without bound.
 const mergeHorizon = time.Hour
 
+// RangeLoader is the optional fast path for the straggler merge: stores that
+// can look a flow up within a time range implement it. An unbounded lookup by
+// id makes VictoriaLogs check every partition in retention (~1s each in
+// production); the merge runs serially inside Flush, so at a few thousand
+// stragglers an hour the flush fell behind real time and stopped producing
+// current flows.
+type RangeLoader interface {
+	GetInRange(ctx context.Context, tenantID, flowID string, from, to time.Time) (*Flow, error)
+}
+
+// mergeLookupSlack widens the range searched for a straggler's predecessor
+// around the straggler's own event times. Both describe the same request, so
+// their times differ by the correlation gap plus clock skew; this is far wider
+// than either and still a tiny slice of retention.
+const mergeLookupSlack = 6 * time.Hour
+
 // mergeWithStored folds a straggler flow into its stored predecessor.
 // Returns nil when there is nothing to merge with, and never fails the flush:
 // a duplicate flow beats a lost one.
 func (p *Pipeline) mergeWithStored(ctx context.Context, tenant, key string, late *Flow, now time.Time) *Flow {
-	existing, err := p.Loader.Get(ctx, tenant, late.FlowID)
+	var existing *Flow
+	var err error
+	if rl, ok := p.Loader.(RangeLoader); ok && !late.FirstSeen.IsZero() && !late.LastSeen.IsZero() {
+		existing, err = rl.GetInRange(ctx, tenant, late.FlowID,
+			late.FirstSeen.Add(-mergeLookupSlack), late.LastSeen.Add(mergeLookupSlack))
+	} else {
+		existing, err = p.Loader.Get(ctx, tenant, late.FlowID)
+	}
 	if err != nil || existing == nil {
 		return nil
 	}
