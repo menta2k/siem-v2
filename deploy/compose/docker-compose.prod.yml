@@ -10,34 +10,66 @@
 # IMAGE_TAG pins the version (default latest, which tracks main). For a real
 # deployment pin a release: IMAGE_TAG=1.2.0 — rollback is then re-running with
 # the previous tag, as documented in docs/deployment.md.
+
+# Bounded container logs. Docker's json-file default never rotates: logproc logs
+# a line per batch, and its single log file reached 6.8 GB, which made even
+# `docker logs --since 15m` time out. 3 x 100 MB keeps hours of history.
+# Takes effect when a container is recreated.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "3"
+
 services:
   apiserver:
     build: !reset null
+    logging: *logging
     image: ghcr.io/menta2k/siem-v2/apiserver:${IMAGE_TAG:-latest}
     pull_policy: always
 
   logproc:
     build: !reset null
+    logging: *logging
     image: ghcr.io/menta2k/siem-v2/logproc:${IMAGE_TAG:-latest}
     pull_policy: always
+    # Shutdown flushes ready flows (15s budget) and then persists the open
+    # correlation window to valkey. Docker's 10s default SIGKILLs it first,
+    # losing the in-memory flows.
+    stop_grace_period: 60s
 
   retentiond:
     build: !reset null
+    logging: *logging
     image: ghcr.io/menta2k/siem-v2/retentiond:${IMAGE_TAG:-latest}
     pull_policy: always
 
   profilerd:
     build: !reset null
+    logging: *logging
     image: ghcr.io/menta2k/siem-v2/profilerd:${IMAGE_TAG:-latest}
     pull_policy: always
 
   frontend:
     build: !reset null
+    logging: *logging
     image: ghcr.io/menta2k/siem-v2/frontend:${IMAGE_TAG:-latest}
     pull_policy: always
 
   wirefilter-svc:
     build: !reset null
+    logging: *logging
     # amd64-only (the release workflow skips QEMU for the Rust build).
     image: ghcr.io/menta2k/siem-v2/wirefilter-svc:${IMAGE_TAG:-latest}
     pull_policy: always
+
+  # Infrastructure and collectors: no image override, only bounded logs.
+  victorialogs-hot: { logging: *logging }
+  victorialogs-warm: { logging: *logging }
+  victorialogs-raw: { logging: *logging }
+  postgres: { logging: *logging }
+  valkey: { logging: *logging }
+  nats: { logging: *logging }
+  rustfs: { logging: *logging }
+  vector-f5: { logging: *logging }
+  cloudflared: { logging: *logging }
